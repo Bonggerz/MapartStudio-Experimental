@@ -4486,6 +4486,14 @@
             return block ? block.displayName : "None";
         }
 
+        function clearCellExactPreview(cell) {
+            if (!cell) return;
+            cell.exactRgb = null;
+            cell.exactTone = null;
+            cell.exactColourSetId = null;
+            cell.exactMapartBlockId = null;
+        }
+
         function converterMapartPresetBlockId(colourSetId, presetIndex) {
             const colourSet = MAPARTCRAFT_VENDOR.coloursJSON[colourSetId];
             if (!colourSet) return "-1";
@@ -4494,9 +4502,38 @@
             return match ? match[0] : "-1";
         }
 
-        function converterMapartDefaultPreset(name) {
+        function converterMapartVendorDefaultPreset(name) {
             const presets = MAPARTCRAFT_VENDOR.DefaultPresets || [];
             return presets.find(preset => preset.name === name) || null;
+        }
+
+        function converterEditorDefaultEverythingPreset() {
+            const vendorEverything = converterMapartVendorDefaultPreset("Everything");
+            const vendorPresetByColourSetId = new Map((vendorEverything?.blocks || [])
+                .map(([colourSetId, presetIndex]) => [String(colourSetId), presetIndex]));
+            const editorPresetByColourSetId = new Map((decodeMapartPreset(DEFAULT_MAPART_PRESET) || [])
+                .map(selection => [selection.mapartId, selection.presetIndex]));
+
+            const blocks = Object.entries(MAPARTCRAFT_VENDOR.coloursJSON || {})
+                .map(([colourSetId, colourSet]) => [
+                    parseInt(colourSetId, 10),
+                    editorPresetByColourSetId.has(parseInt(colourSetId, 10))
+                        ? editorPresetByColourSetId.get(parseInt(colourSetId, 10))
+                        : (vendorPresetByColourSetId.get(colourSetId) ?? 0)
+                ]);
+
+            return {
+                name: "Everything",
+                localeKey: vendorEverything?.localeKey || "BLOCK-SELECTION/PRESETS/EVERYTHING",
+                blocks
+            };
+        }
+
+        function converterMapartDefaultPreset(name) {
+            if (normalizeConverterPresetName(name).toLowerCase() === "everything") {
+                return converterEditorDefaultEverythingPreset();
+            }
+            return converterMapartVendorDefaultPreset(name);
         }
 
         function converterPresetIsDefault(name) {
@@ -4696,11 +4733,11 @@
         function syncLegacyConverterSelectionFromMapart(colourSetId) {
             const colourSet = MAPARTCRAFT_VENDOR.coloursJSON && MAPARTCRAFT_VENDOR.coloursJSON[colourSetId];
             if (!colourSet) return;
-            const legacyColor = COLOR_BY_MAPART_ID.get(colourSet.mapdatId);
+            const legacyColor = COLOR_BY_MAPART_ID.get(parseInt(colourSetId, 10));
             const blockId = converterMapartSelectedBlocks[colourSetId];
             const mapartBlock = colourSet.blocks[blockId];
             if (!legacyColor || !mapartBlock) return;
-            const legacyBlock = MAPART_BLOCK_BY_COLOR_AND_PRESET.get(`${colourSet.mapdatId}:${mapartBlock.presetIndex}`);
+            const legacyBlock = MAPART_BLOCK_BY_COLOR_AND_PRESET.get(`${colourSetId}:${mapartBlock.presetIndex}`);
             if (legacyBlock) converterSelectedBlockByColorId[legacyColor.id] = legacyBlock.key;
         }
 
@@ -5059,6 +5096,11 @@
             return existing ? existing.block : makeBlock(titleWords(raw.replace(/^minecraft:/, "")), raw);
         }
 
+        function converterAirBlockObject() {
+            const existing = BLOCK_BY_KEY.get(stateKey("minecraft:air", {}));
+            return existing ? existing.block : makeBlock("Air", "minecraft:air");
+        }
+
         function converterColorCandidates() {
             const cacheKey = `${converterStaircasing.value}:${converterColorMethod.value}`;
             if (converterDistanceCache.has(cacheKey)) return converterDistanceCache.get(cacheKey);
@@ -5314,8 +5356,8 @@
 
         function mapColorByteForPixel(pixel) {
             if (!pixel || pixel.transparent) return 0;
-            const shade = pixel.tone === "unobtainable" ? 0 : pixel.tone === "dark" ? 1 : pixel.tone === "light" ? 3 : 2;
-            const mapartId = pixel.color?.mapartId ?? MAPARTCRAFT_VENDOR.coloursJSON[pixel.colourSetId]?.mapdatId ?? 0;
+            const shade = pixel.tone === "light" ? 2 : pixel.tone === "unobtainable" ? 3 : pixel.tone === "normal" ? 1 : 0;
+            const mapartId = MAPARTCRAFT_VENDOR.coloursJSON[pixel.colourSetId]?.mapdatId ?? pixel.color?.mapartId ?? 0;
             return mapartId * 4 + shade;
         }
 
@@ -5347,9 +5389,9 @@
                     continue;
                 }
                 const colourSet = MAPARTCRAFT_VENDOR.coloursJSON[match.colourSetId];
-                const legacyColor = COLOR_BY_MAPART_ID.get(colourSet.mapdatId) || {
+                const legacyColor = COLOR_BY_MAPART_ID.get(parseInt(match.colourSetId, 10)) || {
                     id: `mapart_${match.colourSetId}`,
-                    mapartId: colourSet.mapdatId,
+                    mapartId: parseInt(match.colourSetId, 10),
                     label: colourSet.colourName,
                     blocks: []
                 };
@@ -5622,14 +5664,248 @@
             return converterPixels[y * fullWidth + x] || null;
         }
 
-        function converterStairYForPixel(pixel, x, z, artBaseY) {
-            if (!converterUsesStaircasing() || !pixel) return artBaseY;
-            const toneOffset = pixel.tone === "dark" ? 0 : pixel.tone === "light" ? 2 : 1;
-            if (converterStaircasing.value === "full_dark") return artBaseY;
-            if (converterStaircasing.value === "full_light") return artBaseY + 2;
-            if (converterStaircasing.value === "upwards") return artBaseY + (z % 3);
-            if (converterStaircasing.value === "reverse_upwards") return artBaseY + (2 - (z % 3));
-            return artBaseY + toneOffset;
+        function converterNbtToneForPixel(pixel) {
+            if (!converterUsesStaircasing() || !pixel || pixel.transparent) return "normal";
+            if (converterStaircasing.value === "full_dark") return "dark";
+            if (converterStaircasing.value === "full_light") return "light";
+            return MAP_TONES.includes(pixel.tone) ? pixel.tone : "normal";
+        }
+
+        function converterNbtToneDelta(tone) {
+            if (tone === "light") return 1;
+            if (tone === "dark") return -1;
+            return 0;
+        }
+
+        function converterNbtInitialColumnHeight(rowCount) {
+            switch (converterStaircasing.value) {
+                case "off":
+                    return 2;
+                case "full_dark":
+                    return rowCount + 1;
+                case "full_light":
+                    return 1;
+                case "classic":
+                case "valley":
+                case "upwards":
+                case "reverse_upwards":
+                    return 0;
+                default:
+                    return converterUsesStaircasing() ? 0 : 2;
+            }
+        }
+
+        function converterNbtSupportRequired(record) {
+            return !!(record && !record.transparent && record.block && record.block.supportRequired);
+        }
+
+        function converterNbtSortColumn(column) {
+            column.sort((a, b) => {
+                if (a.z !== b.z) return a.z - b.z;
+                return b.y - a.y;
+            });
+        }
+
+        function converterNbtAdjustColumn(column) {
+            if (column.length === 0) return;
+            converterNbtSortColumn(column);
+
+            switch (converterStaircasing.value) {
+                case "valley":
+                case "upwards":
+                case "reverse_upwards": {
+                    const plateaus = [{ startIndex: 0, endIndex: 0 }];
+                    let ascending = false;
+                    let currentPlateauStartIndex = null;
+                    let visibleBlocksHeight = column[0].y;
+
+                    for (let i = 0; i < column.length; i++) {
+                        const physicalBlock = column[i];
+                        if (physicalBlock.kind !== "art") continue;
+                        if (ascending && physicalBlock.y < visibleBlocksHeight) {
+                            ascending = false;
+                            plateaus.push({
+                                startIndex: currentPlateauStartIndex,
+                                endIndex: i
+                            });
+                        } else if (physicalBlock.y > visibleBlocksHeight) {
+                            ascending = true;
+                            currentPlateauStartIndex = i;
+                        }
+                        visibleBlocksHeight = physicalBlock.y;
+                    }
+
+                    plateaus.push({ startIndex: column.length, endIndex: column.length });
+
+                    const nonPlateauPulldownHeights = [Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER];
+                    while (plateaus.length !== 1) {
+                        let pullDownHeight = Number.MAX_SAFE_INTEGER;
+                        for (let i = plateaus[0].endIndex; i < plateaus[1].startIndex; i++) {
+                            pullDownHeight = Math.min(column[i].y, pullDownHeight);
+                        }
+                        if (pullDownHeight === Number.MAX_SAFE_INTEGER) pullDownHeight = 0;
+                        for (let i = plateaus[0].endIndex; i < plateaus[1].startIndex; i++) {
+                            column[i].y -= pullDownHeight;
+                        }
+
+                        nonPlateauPulldownHeights[1] = pullDownHeight;
+                        let plateauPulldownHeight = Math.min(nonPlateauPulldownHeights[0], nonPlateauPulldownHeights[1]);
+                        if (plateauPulldownHeight === Number.MAX_SAFE_INTEGER) plateauPulldownHeight = 0;
+                        for (let i = plateaus[0].startIndex; i < plateaus[0].endIndex; i++) {
+                            column[i].y -= plateauPulldownHeight;
+                        }
+
+                        plateaus.shift();
+                        nonPlateauPulldownHeights[0] = nonPlateauPulldownHeights[1];
+                    }
+                    break;
+                }
+                case "classic": {
+                    const minY = column.reduce((min, block) => Math.min(min, block.y), Number.MAX_SAFE_INTEGER);
+                    column.forEach(block => { block.y -= minY; });
+                    break;
+                }
+                default:
+                    break;
+            }
+        }
+
+        function converterNbtAddOptimizedSupports(column, layout, rowNumber, previousHeight, currentHeight, supportBlock) {
+            const mode = converterSupportMode.value;
+            if (mode === "none") return;
+
+            const record = layout[rowNumber];
+            const addSupport = (y, z) => {
+                column.push({ block: supportBlock, y, z, kind: "support" });
+            };
+
+            if (mode === "important") {
+                if (converterNbtSupportRequired(record)) addSupport(currentHeight - 1, rowNumber + 1);
+                return;
+            }
+
+            if (mode === "all_double") {
+                switch (rowNumber) {
+                    case 0:
+                        addSupport(previousHeight - 1, rowNumber);
+                        if (record.tone === "dark") addSupport(previousHeight - 2, rowNumber);
+                        break;
+                    case layout.length - 1:
+                        addSupport(currentHeight - 1, rowNumber + 1);
+                        if (record.tone === "light") addSupport(currentHeight - 2, rowNumber + 1);
+                    // eslint-disable-next-line no-fallthrough
+                    default: {
+                        addSupport(previousHeight - 1, rowNumber);
+                        const previousRecord = layout[rowNumber - 1];
+                        if ((previousRecord && previousRecord.tone === "light") || record.tone === "dark") {
+                            addSupport(previousHeight - 2, rowNumber);
+                        }
+                        break;
+                    }
+                }
+                return;
+            }
+
+            switch (rowNumber) {
+                case 0: {
+                    if (record.tone === "dark" || (record.tone === "normal" && converterNbtSupportRequired(record))) {
+                        addSupport(previousHeight - 1, rowNumber);
+                    }
+                    if (record.tone === "dark" && converterNbtSupportRequired(record)) {
+                        addSupport(previousHeight - 2, rowNumber);
+                    }
+                    break;
+                }
+                case 1: {
+                    const firstRecord = layout[rowNumber - 1];
+                    if (
+                        (firstRecord && firstRecord.tone === "light") ||
+                        record.tone === "dark" ||
+                        converterNbtSupportRequired(firstRecord) ||
+                        (record.tone === "normal" && converterNbtSupportRequired(record))
+                    ) {
+                        addSupport(previousHeight - 1, rowNumber);
+                    }
+                    if (record.tone === "dark" && converterNbtSupportRequired(record)) {
+                        addSupport(previousHeight - 2, rowNumber);
+                    }
+                    break;
+                }
+                case layout.length - 1: {
+                    const northRecord = layout[rowNumber - 1];
+                    if (
+                        record.tone === "light" ||
+                        converterNbtSupportRequired(record) ||
+                        (record.tone === "normal" && converterNbtSupportRequired(northRecord))
+                    ) {
+                        addSupport(currentHeight - 1, rowNumber + 1);
+                    }
+                    if (record.tone === "light" && converterNbtSupportRequired(northRecord)) {
+                        addSupport(currentHeight - 2, rowNumber + 1);
+                    }
+                }
+                // eslint-disable-next-line no-fallthrough
+                default: {
+                    const northRecord = layout[rowNumber - 2];
+                    const inQuestionRecord = layout[rowNumber - 1];
+                    if (
+                        (inQuestionRecord && inQuestionRecord.tone === "light") ||
+                        record.tone === "dark" ||
+                        converterNbtSupportRequired(inQuestionRecord) ||
+                        (record.tone === "normal" && converterNbtSupportRequired(record)) ||
+                        (inQuestionRecord && inQuestionRecord.tone === "normal" && converterNbtSupportRequired(northRecord))
+                    ) {
+                        addSupport(previousHeight - 1, rowNumber);
+                    }
+                    if (
+                        (record.tone === "dark" && converterNbtSupportRequired(record)) ||
+                        (inQuestionRecord && inQuestionRecord.tone === "light" && converterNbtSupportRequired(northRecord))
+                    ) {
+                        addSupport(previousHeight - 2, rowNumber);
+                    }
+                    break;
+                }
+            }
+        }
+
+        function converterNbtPhysicalColumn(localX, globalX, startY, height, fullWidth, supportBlock, airBlock) {
+            const layout = [];
+            for (let row = 0; row < height; row++) {
+                const pixel = converterPixelAt(globalX, startY + row, fullWidth);
+                const transparent = !pixel || pixel.transparent;
+                const block = transparent ? airBlock : converterBlockForPixel(pixel);
+                layout.push({
+                    pixel,
+                    block,
+                    transparent,
+                    tone: converterNbtToneForPixel(pixel)
+                });
+            }
+
+            const column = [];
+            let currentHeight = converterNbtInitialColumnHeight(layout.length);
+            if (layout[0]) {
+                column.push({ block: layout[0].transparent ? airBlock : supportBlock, y: currentHeight, z: 0, kind: "noobline" });
+            }
+
+            for (let rowNumber = 0; rowNumber < layout.length; rowNumber++) {
+                const record = layout[rowNumber];
+                const previousHeight = currentHeight;
+                currentHeight += converterNbtToneDelta(record.tone);
+
+                column.push({ block: record.block, y: currentHeight, z: rowNumber + 1, kind: "art" });
+                converterNbtAddOptimizedSupports(column, layout, rowNumber, previousHeight, currentHeight, supportBlock);
+            }
+
+            converterNbtAdjustColumn(column);
+            const airZ = new Set(column.filter(block => block.block === airBlock).map(block => block.z));
+            if (airZ.size) {
+                column.forEach(block => {
+                    if (airZ.has(block.z)) block.block = airBlock;
+                });
+            }
+            column.forEach(block => { block.x = localX; });
+            return column;
         }
 
         function converterMapartBlockNbtData(mapartBlock) {
@@ -5808,9 +6084,8 @@
             const paletteMap = new Map();
             const blocks = [];
             const supportBlock = converterSupportBlockObject();
-            const supportEnabled = converterSupportMode.value !== "none";
-            const artBaseY = supportEnabled || converterUsesStaircasing() ? 1 : 0;
-            let maxY = artBaseY;
+            const airBlock = converterAirBlockObject();
+            let maxY = 0;
 
             const addBlock = (block, x, y, z) => {
                 if (y < 0) return;
@@ -5823,25 +6098,11 @@
                 if (y > maxY) maxY = y;
             };
 
-            const nooblineFallbackBlock = converterFallbackArtworkBlock();
             for (let x = 0; x < width; x++) {
-                const sourcePixel = converterPixelAt(startX + x, startY, fullWidth);
-                addBlock(converterBlockForPixel(sourcePixel) || nooblineFallbackBlock, x, artBaseY, 0);
-            }
-
-            for (let y = 0; y < height; y++) {
-                for (let x = 0; x < width; x++) {
-                    const pixel = converterPixelAt(startX + x, startY + y, fullWidth);
-                    if (!pixel || pixel.transparent) continue;
-                    const block = converterBlockForPixel(pixel);
-                    const blockY = converterStairYForPixel(pixel, startX + x, startY + y, artBaseY);
-                    addBlock(block, x, blockY, y + 1);
-                    const needsSupport = supportEnabled && block && (converterSupportMode.value !== "important" || block.supportRequired);
-                    if (needsSupport) {
-                        addBlock(supportBlock, x, blockY - 1, y + 1);
-                        if (converterSupportMode.value === "all_double") addBlock(supportBlock, x, blockY - 2, y + 1);
-                    }
-                }
+                const physicalColumn = converterNbtPhysicalColumn(x, startX + x, startY, height, fullWidth, supportBlock, airBlock);
+                physicalColumn.forEach(physicalBlock => {
+                    addBlock(physicalBlock.block, physicalBlock.x, physicalBlock.y, physicalBlock.z);
+                });
             }
 
             return {
@@ -5962,13 +6223,29 @@
             }
         }
 
+        function converterEditorExactPixelsSnapshot() {
+            const width = converterOutputWidth();
+            const height = converterOutputHeight();
+            if (!converterPixels.length || converterPixels.length !== width * height) return null;
+            return {
+                width,
+                height,
+                pixels: converterPixels.map(pixel => pixel && !pixel.transparent ? {
+                    rgb: Array.isArray(pixel.rgb) ? pixel.rgb.slice(0, 3) : null,
+                    tone: pixel.tone || "normal",
+                    colourSetId: pixel.colourSetId || null,
+                    mapartBlockId: pixel.mapartBlockId || null
+                } : null)
+            };
+        }
+
         async function openConverterOutputInEditor() {
             if (!converterPixels.length) return;
             if (loadedFiles.length > 0 && !confirm("Replace the currently loaded editor data with this converter output?")) return;
             try {
                 const data = gzipNbtRoot(createConverterNbtRoot());
                 const file = new File([data], `${converterBaseName()}_combined.nbt`, { type: "application/octet-stream" });
-                await loadEditorNbtFiles([file]);
+                await loadEditorNbtFiles([file], { exactPixels: converterEditorExactPixelsSnapshot() });
                 switchStudioWorkspace("editor");
             } catch (error) {
                 setConverterStatus("Open in Editor failed: " + error.message);
@@ -8285,7 +8562,14 @@
         });
 
         // --- 3. MULTI-FILE PARSER AND STITCHER ---
-        async function loadEditorNbtFiles(fileList) {
+        function exactEditorPixelAt(exactPixels, x, z, width, height) {
+            if (!exactPixels || exactPixels.width !== width || exactPixels.height !== height) return null;
+            if (x < 0 || z < 0 || x >= width || z >= height) return null;
+            const pixel = exactPixels.pixels && exactPixels.pixels[z * width + x];
+            return pixel && Array.isArray(pixel.rgb) ? pixel : null;
+        }
+
+        async function loadEditorNbtFiles(fileList, options = {}) {
             const files = Array.from(fileList);
             if (files.length === 0) return;
 
@@ -8446,6 +8730,7 @@
                     const globalZ = offsetZ + localZ;
                     
                     if (globalX >= 0 && globalX < mapWidth && globalZ >= 0 && globalZ < mapHeight) {
+                        const exactPixel = exactEditorPixelAt(options.exactPixels, globalX, globalZ, mapWidth, mapHeight);
                         const cell = {
                             blockRef: b,
                             file: lf,
@@ -8457,7 +8742,11 @@
                             globalX,
                             globalZ,
                             colorId: blockInfo.color.id,
-                            blockKey: blockInfo.block.key
+                            blockKey: blockInfo.block.key,
+                            exactRgb: exactPixel ? exactPixel.rgb.slice(0, 3) : null,
+                            exactTone: exactPixel ? exactPixel.tone : null,
+                            exactColourSetId: exactPixel ? exactPixel.colourSetId : null,
+                            exactMapartBlockId: exactPixel ? exactPixel.mapartBlockId : null
                         };
                         gridMap[globalZ * mapWidth + globalX] = cell;
                         lf.editableCellsByLocal.set(`${localX},${localZ}`, cell);
@@ -8665,6 +8954,7 @@
 
         function staircasedToneForCell(cell) {
             if (paletteMode !== "staircased") return "normal";
+            if (cell && MAP_TONES.includes(cell.exactTone)) return cell.exactTone;
 
             const previousY = previousStaircaseY(cell);
             if (previousY === null) return "normal";
@@ -8674,6 +8964,7 @@
         }
 
         function rgbForCellColor(cell, color) {
+            if (cell && Array.isArray(cell.exactRgb)) return cell.exactRgb;
             return rgbForMapTone(color, staircasedToneForCell(cell));
         }
 
@@ -8718,6 +9009,7 @@
 
             pos[1] = nextY;
             cell.rawY = nextY;
+            clearCellExactPreview(cell);
             lf.blockLookup.set(newKey, cell.blockRef);
 
             if (lf.topMapBlockByRawXZ) {
@@ -8845,6 +9137,7 @@
                 item.cell.blockRef.state.value = item.targetPaletteIndex;
                 item.cell.colorId = selectedColor.id;
                 item.cell.blockKey = targetBlock.key;
+                clearCellExactPreview(item.cell);
             }
 
             const yChanged = applyManualShadingSolver(changedCells);
@@ -10120,6 +10413,7 @@
                 item.cell.blockRef.state.value = item.targetPaletteIndex;
                 item.cell.colorId = targetInfo.color.id;
                 item.cell.blockKey = targetInfo.block.key;
+                clearCellExactPreview(item.cell);
             }
 
             applyManualShadingSolver(changedCells, targetTone || "normal", paletteMode === "staircased");
@@ -11188,6 +11482,7 @@
                 target.cell.blockRef.state.value = target.targetPaletteIndex;
                 target.cell.colorId = target.color.id;
                 target.cell.blockKey = target.block.key;
+                clearCellExactPreview(target.cell);
             }
 
             applyManualShadingOverrides(targets, paletteMode === "staircased");
@@ -11421,6 +11716,7 @@
                 if (state !== -1 && (cell.blockRef.state.value !== state || cell.rawY !== y)) {
                     const supportChange = supportChangeRecordForCell(cell);
                     cell.blockRef.state.value = state;
+                    clearCellExactPreview(cell);
                     setCellY(cell, y);
                     updateCellMetadata(cell);
                     changedCells.push(supportChange);
@@ -12539,6 +12835,7 @@
                 target.cell.blockRef.state.value = state;
                 target.cell.colorId = target.color ? target.color.id : null;
                 target.cell.blockKey = target.block.key;
+                clearCellExactPreview(target.cell);
             }
 
             toneOverridesByColumn.forEach((overrides, globalX) => {
