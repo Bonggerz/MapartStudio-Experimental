@@ -43,7 +43,24 @@ Editor workflow:
 
 ## License
 
-This project is licensed under the GNU General Public License v3.0.
+Mapart Studio is licensed under the GNU General Public License v3.0. See
+`LICENSE.txt`.
 
-The block/color database and converter behavior are adapted from MapArtCraft:
-https://github.com/mike2b2t/mapartcraft
+The Image to NBT Converter, converter preview behavior, material counting,
+block/color data, preset data, dithering behavior, support-block behavior, and
+related mapart conversion logic include work derived from MapArtCraft
+GPL-3.0 source/data:
+
+- https://github.com/rebane2001/mapartcraft
+- https://github.com/mike2b2t/mapartcraft
+
+The vendored upstream source is included at `vendor/mapartcraft`, with its
+license at `vendor/mapartcraft/LICENSE`.
+
+Local MapArtCraft-derived/generated files include:
+
+- `mapartcraft_exact.js`
+- `mapartcraft_vendor_data.js`
+- Converter-related portions of `nbt_mapart_editor.html`
+
+See `NOTICE.md` for attribution, provenance, and corresponding-source notes.

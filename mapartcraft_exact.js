@@ -1,6 +1,15 @@
-// Adapted from MapArtCraft GPL-3.0 source:
-// vendor/mapartcraft/src/components/mapart/workers/mapCanvas.js
-// vendor/mapartcraft/src/components/mapart/mapPreview.js
+// Mapart Studio conversion engine adapter.
+//
+// Derived from MapArtCraft GPL-3.0 source:
+// - vendor/mapartcraft/src/components/mapart/workers/mapCanvas.js
+// - vendor/mapartcraft/src/components/mapart/mapPreview.js
+//
+// Upstream:
+// - https://github.com/rebane2001/mapartcraft
+// - https://github.com/mike2b2t/mapartcraft
+//
+// Modified for Mapart Studio. See NOTICE.md, LICENSE.txt, and
+// vendor/mapartcraft/LICENSE for attribution and license details.
 (function () {
     const alphaColorIdx = 61;
 

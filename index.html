@@ -1,4 +1,11 @@
 <!DOCTYPE html>
+<!--
+Mapart Studio
+Licensed under GPL-3.0; see LICENSE.txt.
+The Image to NBT Converter and related mapart conversion behavior include
+modified/adapted GPL-3.0 work from MapArtCraft. See NOTICE.md and
+vendor/mapartcraft/LICENSE for attribution and upstream license details.
+-->
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -1855,6 +1862,7 @@
         .converter-panel {
             display: flex;
             flex-direction: column;
+            min-width: 0;
             min-height: 0;
             background: #1e1e2e;
             border: 1px solid #45475a;
@@ -1877,9 +1885,11 @@
 
         .converter-panel-body {
             flex: 1 1 auto;
+            min-width: 0;
             min-height: 0;
             padding: 10px;
-            overflow: auto;
+            overflow-x: hidden;
+            overflow-y: auto;
             scrollbar-width: thin;
             scrollbar-color: #45475a #1e1e2e;
         }
@@ -1905,6 +1915,45 @@
         .converter-field > span {
             color: #cdd6f4;
             font-weight: bold;
+            min-width: 0;
+        }
+
+        .converter-file-field {
+            display: grid;
+            grid-template-columns: auto minmax(0, 1fr);
+            gap: 8px;
+            align-items: center;
+            min-width: 0;
+        }
+
+        .converter-file-control {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            min-width: 0;
+        }
+
+        .converter-file-control input[type="file"] {
+            flex: 0 0 116px;
+            width: 116px;
+            min-width: 0;
+            max-width: 116px;
+            overflow: hidden;
+            font-size: 11px;
+        }
+
+        .converter-file-name {
+            flex: 1 1 auto;
+            display: block;
+            min-width: 0;
+            overflow-x: auto;
+            overflow-y: hidden;
+            padding: 3px 0;
+            white-space: nowrap;
+            color: #cdd6f4;
+            font-weight: normal;
+            scrollbar-width: thin;
+            scrollbar-color: #45475a #1e1e2e;
         }
 
         .converter-field input[type="text"],
@@ -2078,6 +2127,21 @@
             border-top: 1px solid #45475a;
             color: #a6adc8;
             font-size: 12px;
+        }
+
+        .converter-preview-meta span {
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .converter-preview-meta span:first-child {
+            flex: 1 1 180px;
+        }
+
+        .converter-preview-meta span:last-child {
+            flex: 0 0 auto;
         }
 
         .converter-palette-tools {
@@ -2559,9 +2623,13 @@
                         <div class="converter-panel-body">
                             <div class="converter-settings">
                                 <div class="converter-field full">
-                                    <label>Image
-                                        <input type="file" id="converterImageInput" accept="image/*">
-                                    </label>
+                                    <div class="converter-file-field">
+                                        <label for="converterImageInput">Image</label>
+                                        <span class="converter-file-control">
+                                            <input type="file" id="converterImageInput" accept="image/*">
+                                            <span class="converter-file-name" id="converterImageFileName" title="No image">No image</span>
+                                        </span>
+                                    </div>
                                 </div>
                                 <div class="converter-field">
                                     <label for="converterMode">Mode</label>
@@ -3096,9 +3164,11 @@
     <div class="license-notice">
         <a href="https://www.gnu.org/licenses/gpl-3.0.en.html" target="_blank" rel="noopener noreferrer">GPL-3.0</a>
         |
-        <a href="https://github.com/Bonggerz/nbt-mapart-editor" target="_blank" rel="noopener noreferrer">Source</a>
+        <a href="https://github.com/Bonggerz/MapartStudio-Experimental" target="_blank" rel="noopener noreferrer">Source</a>
         |
-        Block/color database adapted from
+        <a href="NOTICE.md" target="_blank" rel="noopener noreferrer">Notices</a>
+        |
+        Converter engine, block/color data, presets, and mapart behavior adapted from
         <a href="https://github.com/mike2b2t/mapartcraft" target="_blank" rel="noopener noreferrer">MapArtCraft</a>
     </div>
 
@@ -3799,6 +3869,9 @@
         ];
         const NO_SUPPORT_BLOCK_KEY = SUPPORT_BLOCK_OPTIONS[0].key;
         const DEFAULT_SUPPORT_BLOCK = SUPPORT_BLOCK_OPTIONS[1];
+        const SUPPORT_BLOCK_OPTION_KEYS = new Set(SUPPORT_BLOCK_OPTIONS.slice(1).map(block => block.key));
+        const EDITOR_SUPPORT_MODE_REQUIRED = "required";
+        const EDITOR_SUPPORT_MODE_ALL = "all";
 
         const TEXT_GLYPHS_7 = {
             " ": ["...", "...", "...", "...", "...", "...", "..."],
@@ -3946,6 +4019,7 @@
         let loadedFiles = []; 
         let mapWidth = 0, mapHeight = 0;
         let gridMap = []; 
+        let columnCellsCache = null;
         let originalFileName = "mapartcraft_export";
         
         let selectedColor = COLORS_BY_ID.get("white") || MAP_COLOR_DATABASE[0];
@@ -4001,6 +4075,10 @@
         let isPanning = false;
         let hasDrawnInCurrentStroke = false;
         let savedUndoInCurrentStroke = false;
+        let strokeRenderThrottling = false;
+        let queuedFullCanvasRenderFrame = null;
+        let supportSyncDeferralDepth = 0;
+        let deferredSupportSyncItems = [];
         
         // Tool States
         let activeTool = 'brush';
@@ -4106,6 +4184,7 @@
         const studioTabs = Array.from(document.querySelectorAll("[data-workspace-tab]"));
         const studioOpenButtons = Array.from(document.querySelectorAll("[data-open-workspace]"));
         const converterImageInput = document.getElementById("converterImageInput");
+        const converterImageFileName = document.getElementById("converterImageFileName");
         const converterMode = document.getElementById("converterMode");
         const converterVersion = document.getElementById("converterVersion");
         const converterMapsWide = document.getElementById("converterMapsWide");
@@ -4236,6 +4315,14 @@
 
         function setConverterStatus(message) {
             if (converterStatus) converterStatus.textContent = message || "";
+        }
+
+        function setConverterImageFileName(name) {
+            if (!converterImageFileName) return;
+            const label = name || "No image";
+            converterImageFileName.textContent = label;
+            converterImageFileName.title = label;
+            converterImageFileName.scrollLeft = 0;
         }
 
         function converterOutputWidth() {
@@ -6291,6 +6378,7 @@
                 image.onload = () => {
                     URL.revokeObjectURL(url);
                     converterImageElement = image;
+                    setConverterImageFileName(file.name);
                     converterImageBaseName = file.name.replace(/\.[^.]+$/, "") || "mapart_image";
                     converterImageNaturalWidth = image.naturalWidth;
                     converterImageNaturalHeight = image.naturalHeight;
@@ -6298,10 +6386,12 @@
                 };
                 image.onerror = () => {
                     URL.revokeObjectURL(url);
+                    setConverterImageFileName("No image");
                     setConverterStatus("Could not load image.");
                 };
                 image.src = url;
             } catch (error) {
+                setConverterImageFileName("No image");
                 setConverterStatus("Could not load image: " + error.message);
             }
         });
@@ -8240,6 +8330,66 @@
             return `${x},${y},${z}`;
         }
 
+        function supportColumnKey(x, z) {
+            return `${x},${z}`;
+        }
+
+        function coordFromKey(key) {
+            const parts = String(key).split(",").map(Number);
+            return parts.length === 3 && parts.every(Number.isFinite)
+                ? { x: parts[0], y: parts[1], z: parts[2] }
+                : null;
+        }
+
+        function ensureSupportIndex(lf) {
+            if (!lf.supportCreatedKeys) lf.supportCreatedKeys = new Set();
+            if (!lf.supportKeysByRawXZ) lf.supportKeysByRawXZ = new Map();
+        }
+
+        function trackSupportKey(lf, key, pos = null) {
+            ensureSupportIndex(lf);
+            const parsed = pos || coordFromKey(key);
+            if (!parsed) return;
+
+            lf.supportCreatedKeys.add(key);
+            const columnKey = supportColumnKey(parsed.x, parsed.z);
+            if (!lf.supportKeysByRawXZ.has(columnKey)) lf.supportKeysByRawXZ.set(columnKey, new Set());
+            lf.supportKeysByRawXZ.get(columnKey).add(key);
+        }
+
+        function trackSupportBlock(lf, block) {
+            if (!block) return;
+            const pos = block.pos.value.list;
+            trackSupportKey(lf, coordKey(pos[0], pos[1], pos[2]), { x: pos[0], y: pos[1], z: pos[2] });
+        }
+
+        function untrackSupportKey(lf, key) {
+            if (!lf || !key) return;
+            ensureSupportIndex(lf);
+            lf.supportCreatedKeys.delete(key);
+
+            const pos = coordFromKey(key);
+            if (!pos) return;
+            const columnKey = supportColumnKey(pos.x, pos.z);
+            const keys = lf.supportKeysByRawXZ.get(columnKey);
+            if (!keys) return;
+            keys.delete(key);
+            if (keys.size === 0) lf.supportKeysByRawXZ.delete(columnKey);
+        }
+
+        function rebuildSupportIndex(lf) {
+            const keys = Array.from(lf.supportCreatedKeys || []);
+            lf.supportCreatedKeys = new Set();
+            lf.supportKeysByRawXZ = new Map();
+            keys.forEach(key => {
+                if (lf.blockLookup && lf.blockLookup.has(key)) trackSupportKey(lf, key);
+            });
+        }
+
+        function supportOptionForKey(key) {
+            return SUPPORT_BLOCK_OPTIONS.find(option => option.key !== NO_SUPPORT_BLOCK_KEY && option.key === key) || null;
+        }
+
         function rebuildBlockLookup(lf) {
             lf.blockLookup = new Map();
             for (const block of lf.blocksList) {
@@ -8253,6 +8403,30 @@
             if (idx !== -1) lf.blocksList.splice(idx, 1);
             const pos = block.pos.value.list;
             lf.blockLookup.delete(coordKey(pos[0], pos[1], pos[2]));
+        }
+
+        function setStructureBlockY(lf, block, nextY) {
+            nextY = Math.max(0, Math.round(nextY));
+            if (!lf || !block) return false;
+
+            const pos = block.pos.value.list;
+            if (pos[1] === nextY) return false;
+
+            const oldKey = coordKey(pos[0], pos[1], pos[2]);
+            const newKey = coordKey(pos[0], nextY, pos[2]);
+            if (lf.blockLookup.get(oldKey) === block) {
+                lf.blockLookup.delete(oldKey);
+            }
+
+            const existing = lf.blockLookup.get(newKey);
+            if (existing && existing !== block && !isEditableArtworkBlock(lf, existing)) {
+                removeBlockFromFile(lf, existing);
+                untrackSupportKey(lf, newKey);
+            }
+
+            pos[1] = nextY;
+            lf.blockLookup.set(newKey, block);
+            return true;
         }
 
         function blockAt(lf, x, y, z) {
@@ -8345,33 +8519,80 @@
                 block.pos.value.list[2] === lf.nooblineZ;
         }
 
+        function buildNooblineBlockByRawX(nooblineZ, blocksList) {
+            const blocksByX = new Map();
+            if (nooblineZ === null) return blocksByX;
+
+            for (const block of blocksList) {
+                const pos = block.pos.value.list;
+                if (pos[2] !== nooblineZ) continue;
+
+                const existing = blocksByX.get(pos[0]);
+                if (!existing || pos[1] > existing.pos.value.list[1]) {
+                    blocksByX.set(pos[0], block);
+                }
+            }
+
+            return blocksByX;
+        }
+
+        function inferSupportMaterialKeyFromNoobline(structurePalette, blocksList, nooblineZ) {
+            if (nooblineZ === null) return null;
+            const counts = new Map();
+            for (const block of blocksList) {
+                const pos = block.pos.value.list;
+                if (pos[2] !== nooblineZ) continue;
+
+                const entry = structurePalette[block.state.value];
+                if (!entry) continue;
+
+                const key = paletteEntryKey(entry);
+                if (!SUPPORT_BLOCK_OPTION_KEYS.has(key)) continue;
+                counts.set(key, (counts.get(key) || 0) + 1);
+            }
+
+            let bestKey = null;
+            let bestCount = 0;
+            counts.forEach((count, key) => {
+                if (count > bestCount) {
+                    bestKey = key;
+                    bestCount = count;
+                }
+            });
+            return bestKey;
+        }
+
         function collectVisibleArtworkBlocks(structurePalette, blocksList, nooblineZ) {
-            const visible = new Map();
+            const columns = new Map();
             for (const block of blocksList) {
                 const pos = block.pos.value.list;
                 if (nooblineZ !== null && pos[2] === nooblineZ) continue;
 
                 const entry = structurePalette[block.state.value];
                 if (!entry) continue;
+                const entryKey = paletteEntryKey(entry);
+                const blockInfo = BLOCK_BY_KEY.get(entryKey) || null;
+                if (!blockInfo) continue;
 
                 const key = `${pos[0]},${pos[2]}`;
-                const existing = visible.get(key);
-                if (!existing || pos[1] > existing.block.pos.value.list[1]) {
-                    visible.set(key, {
-                        block,
-                        blockInfo: BLOCK_BY_KEY.get(paletteEntryKey(entry)) || null
-                    });
-                }
+                if (!columns.has(key)) columns.set(key, []);
+                columns.get(key).push({ block, blockInfo, entryKey });
             }
-            return Array.from(visible.values()).filter(item => item.blockInfo);
+
+            const visible = [];
+            columns.forEach(items => {
+                items.sort((a, b) => b.block.pos.value.list[1] - a.block.pos.value.list[1]);
+                const top = items[0];
+                visible.push({ block: top.block, blockInfo: top.blockInfo });
+            });
+            return visible;
         }
 
-        function buildTopMapBlockByRawXZ(structurePalette, blocksList) {
+        function buildTopMapBlockByRawXZ(visibleBlocks) {
             const columns = new Map();
-            for (const block of blocksList) {
+            for (const visible of visibleBlocks) {
+                const block = visible.block;
                 const pos = block.pos.value.list;
-                const entry = structurePalette[block.state.value];
-                if (!entry || !BLOCK_BY_KEY.has(paletteEntryKey(entry))) continue;
 
                 const key = `${pos[0]},${pos[2]}`;
                 const existing = columns.get(key);
@@ -8391,13 +8612,17 @@
         function inferSupportBlockFromLoadedFiles() {
             const counts = new Map();
             for (const lf of loadedFiles) {
+                if (supportOptionForKey(lf.supportMaterialKey)) {
+                    counts.set(lf.supportMaterialKey, (counts.get(lf.supportMaterialKey) || 0) + Math.max(1, lf.supportCreatedKeys.size));
+                }
+
                 for (const cell of lf.editableCellsByLocal.values()) {
                     const support = blockAt(lf, cell.rawX, cell.rawY - 1, cell.rawZ);
                     if (!support) continue;
                     const entry = lf.structurePalette[support.state.value];
                     if (!entry) continue;
                     const key = paletteEntryKey(entry);
-                    if (SUPPORT_BLOCK_OPTIONS.some(option => option.key !== NO_SUPPORT_BLOCK_KEY && option.key === key)) {
+                    if (supportOptionForKey(key)) {
                         counts.set(key, (counts.get(key) || 0) + 1);
                     }
                 }
@@ -8618,8 +8843,9 @@
                         continue;
                     }
                     const nooblineZ = detectNooblineZ(nbtRoot, structurePalette, blocksList);
+                    const supportMaterialKey = inferSupportMaterialKeyFromNoobline(structurePalette, blocksList, nooblineZ);
                     const visibleBlocks = collectVisibleArtworkBlocks(structurePalette, blocksList, nooblineZ);
-                    const topMapBlockByRawXZ = buildTopMapBlockByRawXZ(structurePalette, blocksList);
+                    const topMapBlockByRawXZ = buildTopMapBlockByRawXZ(visibleBlocks);
 
                     let fMinX = Infinity, fMinZ = Infinity;
                     
@@ -8655,6 +8881,7 @@
                         paletteKeyToIndex: buildPaletteKeyMap(structurePalette),
                         layerY: editableLayerY,
                         nooblineZ: nooblineZ,
+                        nooblineBlockByRawX: buildNooblineBlockByRawX(nooblineZ, blocksList),
                         minX: fMinX,
                         minZ: fMinZ,
                         gridX: gX,
@@ -8662,6 +8889,8 @@
                         visibleBlocks: visibleBlocks,
                         topMapBlockByRawXZ: topMapBlockByRawXZ,
                         staircased: visibleBlocksAreStaircased(visibleBlocks),
+                        supportMaterialKey: supportMaterialKey,
+                        supportMode: EDITOR_SUPPORT_MODE_REQUIRED,
                         editableCellsByLocal: new Map(),
                         supportCreatedKeys: new Set()
                     };
@@ -8754,6 +8983,10 @@
                 }
             }
 
+            for (const lf of loadedFiles) {
+                initializeImportedSupportTracking(lf);
+            }
+
             if (usesBlockPaletteMode()) {
                 inferSupportBlockFromLoadedFiles();
             } else {
@@ -8797,10 +9030,91 @@
             return !!(cell && cell.blockRef === block);
         }
 
+        function inferSupportMaterialKeyFromImportedBlocks(lf) {
+            const counts = new Map();
+            for (const block of lf.blocksList) {
+                if (isNooblineBlock(lf, block) || isEditableArtworkBlock(lf, block)) continue;
+
+                const entry = lf.structurePalette[block.state.value];
+                if (!entry) continue;
+
+                const key = paletteEntryKey(entry);
+                if (!SUPPORT_BLOCK_OPTION_KEYS.has(key)) continue;
+                counts.set(key, (counts.get(key) || 0) + 1);
+            }
+
+            for (const cell of lf.editableCellsByLocal.values()) {
+                const support = blockAt(lf, cell.rawX, cell.rawY - 1, cell.rawZ);
+                if (!support || isEditableArtworkBlock(lf, support)) continue;
+
+                const entry = lf.structurePalette[support.state.value];
+                if (!entry) continue;
+
+                const key = paletteEntryKey(entry);
+                if (!SUPPORT_BLOCK_OPTION_KEYS.has(key)) continue;
+                counts.set(key, (counts.get(key) || 0) + 3);
+            }
+
+            let bestKey = null;
+            let bestCount = 0;
+            counts.forEach((count, key) => {
+                if (count > bestCount) {
+                    bestKey = key;
+                    bestCount = count;
+                }
+            });
+            return bestKey;
+        }
+
+        function initializeImportedSupportTracking(lf) {
+            const supportKey = lf.supportMaterialKey || inferSupportMaterialKeyFromImportedBlocks(lf);
+            lf.supportCreatedKeys = new Set();
+            lf.supportKeysByRawXZ = new Map();
+            lf.supportMode = EDITOR_SUPPORT_MODE_REQUIRED;
+            if (!supportKey || !supportOptionForKey(supportKey)) return;
+
+            lf.supportMaterialKey = supportKey;
+            let managedSupportCount = 0;
+            for (const block of lf.blocksList) {
+                if (isNooblineBlock(lf, block) || isEditableArtworkBlock(lf, block)) continue;
+
+                const entry = lf.structurePalette[block.state.value];
+                if (!entry || paletteEntryKey(entry) !== supportKey) continue;
+
+                const pos = block.pos.value.list;
+                trackSupportBlock(lf, block);
+                managedSupportCount++;
+            }
+
+            let requiredSupportCount = 0;
+            for (const cell of lf.editableCellsByLocal.values()) {
+                const info = paletteInfoForState(lf, cell.blockRef.state.value);
+                if (info && info.block.supportRequired) requiredSupportCount++;
+            }
+
+            const editableCount = lf.editableCellsByLocal.size;
+            const denseSupportThreshold = Math.max(16, Math.floor(editableCount * 0.35));
+            const beyondRequiredThreshold = Math.max(8, Math.floor(editableCount * 0.05));
+            if (
+                managedSupportCount >= denseSupportThreshold &&
+                managedSupportCount > requiredSupportCount + beyondRequiredThreshold
+            ) {
+                lf.supportMode = EDITOR_SUPPORT_MODE_ALL;
+            }
+        }
+
         function cellNeedsSupport(cell) {
             if (!usesBlockPaletteMode()) return false;
             const info = updateCellMetadata(cell);
             return !!(info && info.block.supportRequired);
+        }
+
+        function cellShouldGenerateSupport(cell) {
+            if (!usesBlockPaletteMode()) return false;
+            if (cell && cell.file && cell.file.supportMode === EDITOR_SUPPORT_MODE_ALL) {
+                return !!paletteInfoForState(cell.file, cell.blockRef.state.value);
+            }
+            return cellNeedsSupport(cell);
         }
 
         function directSupportPositionsForCell(cell) {
@@ -8831,19 +9145,40 @@
         function supportChangeRecordForCell(cell) {
             return {
                 cell,
-                previousSupportPositions: cellNeedsSupport(cell) ? supportPositionsForCell(cell) : []
+                previousSupportPositions: cellShouldGenerateSupport(cell) ? supportPositionsForCell(cell) : []
             };
         }
 
         function normalizeSupportChangeRecords(changedItems) {
+            if (!changedItems || changedItems.length === 0) return [];
             return changedItems
                 .map(item => item && item.cell ? item : { cell: item, previousSupportPositions: [] })
                 .filter(record => record.cell);
         }
 
+        function beginSupportSyncDeferral() {
+            supportSyncDeferralDepth++;
+        }
+
+        function endSupportSyncDeferral() {
+            if (supportSyncDeferralDepth > 0) supportSyncDeferralDepth--;
+            if (supportSyncDeferralDepth > 0 || deferredSupportSyncItems.length === 0) return;
+
+            const queuedItems = deferredSupportSyncItems;
+            deferredSupportSyncItems = [];
+            syncSupportsForCells(queuedItems, { immediate: true });
+            refreshMaterialListIfOpen();
+        }
+
+        function deferSupportSyncItems(changedItems) {
+            if (!changedItems || changedItems.length === 0) return;
+            deferredSupportSyncItems.push(...changedItems);
+        }
+
         function createSupportBlockAt(lf, pos) {
             if (!supportGenerationEnabled()) return;
             if (pos.y < 0 || blockAt(lf, pos.x, pos.y, pos.z)) return;
+            lf.supportMaterialKey = selectedSupportBlock.key;
             const state = ensurePaletteState(lf, selectedSupportBlock);
             const supportBlock = {
                 pos: { type: 9, name: "pos", value: { type: 3, list: [pos.x, pos.y, pos.z] } },
@@ -8852,11 +9187,15 @@
             lf.blocksList.push(supportBlock);
             const key = coordKey(pos.x, pos.y, pos.z);
             lf.blockLookup.set(key, supportBlock);
-            lf.supportCreatedKeys.add(key);
+            trackSupportKey(lf, key, pos);
         }
 
-        function syncSupportsForCells(changedCells) {
+        function syncSupportsForCells(changedCells, options = {}) {
             if (!usesBlockPaletteMode()) return;
+            if (supportSyncDeferralDepth > 0 && !options.immediate) {
+                deferSupportSyncItems(changedCells);
+                return;
+            }
 
             const byFile = new Map();
             for (const record of normalizeSupportChangeRecords(changedCells)) {
@@ -8881,11 +9220,30 @@
                     }
                 }
 
+                const affectedSupportColumns = new Set();
+                affectedCells.forEach(cell => affectedSupportColumns.add(`${cell.rawX},${cell.rawZ}`));
+                ensureSupportIndex(lf);
+                for (const columnKey of affectedSupportColumns) {
+                    const keys = lf.supportKeysByRawXZ.get(columnKey);
+                    if (!keys) continue;
+
+                    for (const key of Array.from(keys)) {
+                        const existing = lf.blockLookup.get(key);
+                        if (!existing) {
+                            untrackSupportKey(lf, key);
+                            continue;
+                        }
+
+                        const pos = existing.pos.value.list;
+                        expired.set(key, { x: pos[0], y: pos[1], z: pos[2] });
+                    }
+                }
+
                 const desired = new Map();
                 if (supportGenerationEnabled()) {
                     affectedCells.forEach(cell => {
                         const positions = supportPositionsForCell(cell);
-                        if (cellNeedsSupport(cell)) {
+                        if (cellShouldGenerateSupport(cell)) {
                             positions.forEach(pos => desired.set(coordKey(pos.x, pos.y, pos.z), pos));
                         }
                     });
@@ -8896,7 +9254,7 @@
                     const existing = blockAt(lf, pos.x, pos.y, pos.z);
                     if (existing && !isEditableArtworkBlock(lf, existing) && lf.supportCreatedKeys.has(key)) {
                         removeBlockFromFile(lf, existing);
-                        lf.supportCreatedKeys.delete(key);
+                        untrackSupportKey(lf, key);
                     }
                 });
 
@@ -8915,12 +9273,15 @@
                 for (const key of Array.from(lf.supportCreatedKeys)) {
                     const existing = lf.blockLookup.get(key);
                     if (existing) removeBlockFromFile(lf, existing);
-                    lf.supportCreatedKeys.delete(key);
+                    untrackSupportKey(lf, key);
                 }
             }
             if (!supportGenerationEnabled()) {
                 refreshMaterialListIfOpen();
                 return;
+            }
+            for (const lf of loadedFiles) {
+                lf.supportMaterialKey = selectedSupportBlock.key;
             }
             syncSupportsForCells(gridMap.filter(Boolean));
             refreshMaterialListIfOpen();
@@ -8939,12 +9300,56 @@
         }
 
         // --- DRAWING AND RENDERING ---
+        function nooblineBlockForCell(cell) {
+            if (!cell || !cell.file || cell.file.nooblineZ === null) return null;
+            if (cell.rawZ - 1 !== cell.file.nooblineZ) return null;
+            return cell.file.nooblineBlockByRawX ? cell.file.nooblineBlockByRawX.get(cell.rawX) || null : null;
+        }
+
+        function ensureNooblineBlockForCell(cell, y) {
+            const existing = nooblineBlockForCell(cell);
+            if (existing) return existing;
+            if (!cell || !cell.file || cell.file.nooblineZ === null) return null;
+
+            const lf = cell.file;
+            const supportOption = supportOptionForKey(lf.supportMaterialKey) ||
+                (selectedSupportBlock && selectedSupportBlock.key !== NO_SUPPORT_BLOCK_KEY ? selectedSupportBlock : DEFAULT_SUPPORT_BLOCK);
+            const state = ensurePaletteState(lf, supportOption);
+            const nextY = Math.max(0, Math.round(y));
+            const block = {
+                pos: { type: 9, name: "pos", value: { type: 3, list: [cell.rawX, nextY, lf.nooblineZ] } },
+                state: { type: 3, name: "state", value: state }
+            };
+            lf.blocksList.push(block);
+            lf.blockLookup.set(coordKey(cell.rawX, nextY, lf.nooblineZ), block);
+            if (!lf.nooblineBlockByRawX) lf.nooblineBlockByRawX = new Map();
+            lf.nooblineBlockByRawX.set(cell.rawX, block);
+            return block;
+        }
+
+        function nooblineYForCell(cell) {
+            const block = nooblineBlockForCell(cell);
+            return block ? block.pos.value.list[1] : null;
+        }
+
+        function syncNooblineForTopCell(cell, tone) {
+            if (!cell || !cell.file || cell.file.nooblineZ === null) return false;
+            if (cell.rawZ - 1 !== cell.file.nooblineZ) return false;
+
+            const nextY = cell.rawY - toneDelta(normalizeTone(tone));
+            const block = ensureNooblineBlockForCell(cell, nextY);
+            return block ? setStructureBlockY(cell.file, block, nextY) : false;
+        }
+
         function previousStaircaseY(cell) {
             const previousGlobalZ = cell.globalZ - 1;
             if (previousGlobalZ >= 0) {
                 const previousCell = gridMap[previousGlobalZ * mapWidth + cell.globalX];
                 if (previousCell) return previousCell.rawY;
             }
+
+            const nooblineY = nooblineYForCell(cell);
+            if (nooblineY !== null) return nooblineY;
 
             const previousColumn = cell.file.topMapBlockByRawXZ
                 ? cell.file.topMapBlockByRawXZ.get(`${cell.rawX},${cell.rawZ - 1}`)
@@ -8979,13 +9384,21 @@
         }
 
         function collectColumnCells(globalX) {
-            const cells = [];
-            if (globalX < 0 || globalX >= mapWidth) return cells;
-            for (let z = 0; z < mapHeight; z++) {
-                const cell = gridMap[z * mapWidth + globalX];
-                if (cell) cells.push(cell);
+            if (globalX < 0 || globalX >= mapWidth) return [];
+            if (
+                !columnCellsCache ||
+                columnCellsCache.gridMap !== gridMap ||
+                columnCellsCache.width !== mapWidth ||
+                columnCellsCache.height !== mapHeight
+            ) {
+                const columns = Array.from({ length: mapWidth }, () => []);
+                for (let i = 0; i < gridMap.length; i++) {
+                    const cell = gridMap[i];
+                    if (cell) columns[i % mapWidth].push(cell);
+                }
+                columnCellsCache = { gridMap, width: mapWidth, height: mapHeight, columns };
             }
-            return cells;
+            return columnCellsCache.columns[globalX] || [];
         }
 
         function setCellY(cell, nextY) {
@@ -9004,7 +9417,7 @@
             const existing = lf.blockLookup.get(newKey);
             if (existing && existing !== cell.blockRef && !isEditableArtworkBlock(lf, existing)) {
                 removeBlockFromFile(lf, existing);
-                lf.supportCreatedKeys.delete(newKey);
+                untrackSupportKey(lf, newKey);
             }
 
             pos[1] = nextY;
@@ -9026,11 +9439,13 @@
             if (columnCells.length === 0) return false;
 
             const solvedY = new Map();
+            const solvedTone = new Map();
             let minSolvedY = Infinity;
 
             for (let i = 0; i < columnCells.length; i++) {
                 const cell = columnCells[i];
                 const tone = normalizeTone(toneOverrides.get(cell) || staircasedToneForCell(cell));
+                solvedTone.set(cell, tone);
                 let previousY = null;
 
                 if (i > 0 && columnCells[i - 1].globalZ === cell.globalZ - 1) {
@@ -9049,6 +9464,8 @@
             solvedY.forEach((nextY, cell) => {
                 if (setCellY(cell, nextY + shiftUp)) changed = true;
             });
+            const firstCell = columnCells[0];
+            if (firstCell && syncNooblineForTopCell(firstCell, solvedTone.get(firstCell))) changed = true;
             return changed;
         }
 
@@ -9143,15 +9560,16 @@
             const yChanged = applyManualShadingSolver(changedCells);
             syncSupportsForCells(supportRecords);
 
-            if (updateCanvasDirectly && !manualShadingActive() && !yChanged && !hasVisiblePaintLayers()) {
+            const canPaintDirectly = updateCanvasDirectly && !manualShadingActive() && !yChanged && !hasVisiblePaintLayers();
+            if (canPaintDirectly) {
                 for (const { cell } of targetCells) {
                     ctx.fillStyle = rgbToCss(rgbForCellColor(cell, selectedColor));
                     ctx.fillRect(cell.globalX, cell.globalZ, 1, 1);
                 }
+                refreshMaterialListIfOpen();
             } else {
                 renderFullCanvas();
             }
-            refreshMaterialListIfOpen();
             return true;
         }
 
@@ -9205,11 +9623,28 @@
                 (!manualShadingActive() || normalizeTone(pixel.tone) === normalizeTone(source.tone)));
         }
 
-        function renderFullCanvas() {
+        function baseCellMatchesSource(cell, source) {
+            if (!cell || !source) return false;
+            const info = updateCellMetadata(cell);
+            return !!(info &&
+                info.color.id === source.colorId &&
+                info.block.key === source.blockKey &&
+                (!manualShadingActive() || normalizeTone(staircasedToneForCell(cell)) === normalizeTone(source.tone)));
+        }
+
+        function canUseBaseOnlyBucketMatch() {
+            return !hasVisiblePaintLayers() && editorLayers.some(layer => layer.kind === "base" && layer.visible);
+        }
+
+        function cancelQueuedFullCanvasRender() {
+            if (queuedFullCanvasRenderFrame === null) return;
+            cancelAnimationFrame(queuedFullCanvasRenderFrame);
+            queuedFullCanvasRenderFrame = null;
+        }
+
+        function renderFullCanvasNow() {
             if (mapWidth === 0 || mapHeight === 0) return;
             const imageData = ctx.createImageData(mapWidth, mapHeight);
-            
-            for(let i=0; i<imageData.data.length; i++) imageData.data[i] = 0; 
 
             for(let i = 0; i < gridMap.length; i++) {
                 const x = i % mapWidth;
@@ -9226,6 +9661,37 @@
             }
             ctx.putImageData(imageData, 0, 0);
             refreshMaterialListIfOpen();
+        }
+
+        function queueFullCanvasRender() {
+            if (queuedFullCanvasRenderFrame !== null) return;
+            queuedFullCanvasRenderFrame = requestAnimationFrame(() => {
+                queuedFullCanvasRenderFrame = null;
+                renderFullCanvasNow();
+            });
+        }
+
+        function renderFullCanvas(options = {}) {
+            if (strokeRenderThrottling && !options.immediate) {
+                queueFullCanvasRender();
+                return;
+            }
+            cancelQueuedFullCanvasRender();
+            renderFullCanvasNow();
+        }
+
+        function beginStrokeRenderThrottle() {
+            strokeRenderThrottling = true;
+            beginSupportSyncDeferral();
+        }
+
+        function endStrokeRenderThrottle() {
+            endSupportSyncDeferral();
+            strokeRenderThrottling = false;
+            if (queuedFullCanvasRenderFrame !== null) {
+                cancelQueuedFullCanvasRender();
+                renderFullCanvasNow();
+            }
         }
 
         function brushCellsAtSize(cx, cz, size) {
@@ -10127,6 +10593,8 @@
             const sourceColorId = sourceInfo.color.id;
             const sourceBlockKey = sourceInfo.block.key;
             const sourceTone = normalizeTone(sourceInfo.tone);
+            const source = { colorId: sourceColorId, blockKey: sourceBlockKey, tone: sourceTone };
+            const useBaseOnlyMatch = canUseBaseOnlyBucketMatch();
             if (
                 sourceColorId === selectedColor.id &&
                 sourceBlockKey === targetBlock.key &&
@@ -10134,27 +10602,27 @@
             ) return false;
 
             const cells = [];
-            const visited = new Set();
-            const stack = [{ x: cx, z: cz }];
+            const visited = new Uint8Array(mapWidth * mapHeight);
+            const stack = [cz * mapWidth + cx];
 
             while (stack.length > 0) {
-                const { x, z } = stack.pop();
-                if (x < 0 || x >= mapWidth || z < 0 || z >= mapHeight) continue;
-
-                const index = z * mapWidth + x;
-                if (visited.has(index)) continue;
-                visited.add(index);
+                const index = stack.pop();
+                if (visited[index]) continue;
+                visited[index] = 1;
+                const x = index % mapWidth;
+                const z = Math.floor(index / mapWidth);
 
                 const cell = gridMap[index];
-                if (!cell || !compositeMatchesSource(x, z, { colorId: sourceColorId, blockKey: sourceBlockKey, tone: sourceTone })) continue;
+                const sourceMatches = useBaseOnlyMatch
+                    ? baseCellMatchesSource(cell, source)
+                    : compositeMatchesSource(x, z, source);
+                if (!cell || !sourceMatches) continue;
                 cells.push(cell);
 
-                stack.push(
-                    { x: x + 1, z },
-                    { x: x - 1, z },
-                    { x, z: z + 1 },
-                    { x, z: z - 1 }
-                );
+                if (x + 1 < mapWidth) stack.push(index + 1);
+                if (x > 0) stack.push(index - 1);
+                if (z + 1 < mapHeight) stack.push(index + mapWidth);
+                if (z > 0) stack.push(index - mapWidth);
             }
 
             return paintCells(cells, false);
@@ -11687,6 +12155,7 @@
             return {
                 states,
                 ys,
+                nooblineYs: loadedFiles.map(lf => Array.from(lf.nooblineBlockByRawX || [], ([rawX, block]) => [rawX, block.pos.value.list[1]])),
                 layers: editorLayers.map(serializeLayer),
                 activeLayerId,
                 quickPaletteItems: quickPaletteItems.map(item => ({ ...item })),
@@ -11723,6 +12192,18 @@
                 }
             }
             if (changedCells.length > 0) syncSupportsForCells(changedCells);
+            if (snapshot.nooblineYs) {
+                snapshot.nooblineYs.forEach((entries, fileIndex) => {
+                    const lf = loadedFiles[fileIndex];
+                    if (!lf || !lf.nooblineBlockByRawX) return;
+                    for (const entry of entries || []) {
+                        const rawX = entry[0];
+                        const y = entry[1];
+                        const block = lf.nooblineBlockByRawX.get(rawX);
+                        if (block) setStructureBlockY(lf, block, y);
+                    }
+                });
+            }
             if (snapshot.layers) {
                 editorLayers = snapshot.layers.map(deserializeLayer);
                 activeLayerId = snapshot.activeLayerId || (editorLayers[0] && editorLayers[0].id) || null;
@@ -11969,10 +12450,12 @@
                     lineStartZ = z;
                     arcFlipSide = e.shiftKey;
                 } else if (activeTool === 'eraser') {
+                    beginStrokeRenderThrottle();
                     if (applyEraser(x, z, true)) {
                         hasDrawnInCurrentStroke = true;
                     }
                 } else {
+                    beginStrokeRenderThrottle();
                     if (applyBrush(x, z, true)) {
                         hasDrawnInCurrentStroke = true;
                     }
@@ -12172,6 +12655,7 @@
             }
 
             isDrawing = false; 
+            endStrokeRenderThrottle();
             savedUndoInCurrentStroke = false;
             isPanning = false;
             document.body.style.cursor = 'default';
@@ -12791,6 +13275,8 @@
                 state.lf.blocksList.splice(0, state.lf.blocksList.length, ...state.blocksList);
                 state.lf.supportCreatedKeys = new Set(state.supportCreatedKeys);
                 rebuildBlockLookup(state.lf);
+                rebuildSupportIndex(state.lf);
+                state.lf.nooblineBlockByRawX = buildNooblineBlockByRawX(state.lf.nooblineZ, state.lf.blocksList);
                 updateStructureSize(state.lf);
             }
         }
