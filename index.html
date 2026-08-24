@@ -2361,21 +2361,37 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
 
         .converter-material-row {
             display: grid;
-            grid-template-columns: minmax(0, 1fr) auto;
-            gap: 10px;
+            grid-template-columns: 22px minmax(0, 1fr) auto;
+            align-items: center;
+            gap: 7px;
             padding: 6px 7px;
             background: #1e1e2e;
             font-size: 12px;
         }
 
-        .converter-material-row span:first-child {
+        .converter-material-row.message {
+            grid-template-columns: minmax(0, 1fr) auto;
+            gap: 10px;
+        }
+
+        .converter-material-exclude,
+        .converter-material-action-placeholder {
+            width: 22px;
+            height: 22px;
+        }
+
+        .converter-material-exclude::before {
+            inset: 3px;
+        }
+
+        .converter-material-name {
             min-width: 0;
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
         }
 
-        .converter-material-row span:last-child {
+        .converter-material-amount {
             color: #f9e2af;
             font-weight: bold;
             white-space: nowrap;
@@ -3186,6 +3202,10 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
             <div class="replace-color-status" id="replaceColorStatus"></div>
         </div>
     </div>
+            </section>
+        </main>
+    </div>
+
     <div class="converter-preset-window" id="converterPresetWindow">
         <div class="converter-preset-title" id="converterPresetDragHandle">
             <span>Save Preset</span>
@@ -3201,9 +3221,6 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
                 <button id="converterPresetOkBtn" type="button">OK</button>
             </div>
         </div>
-    </div>
-            </section>
-        </main>
     </div>
 
     <div class="license-notice">
@@ -4312,6 +4329,7 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
         const CONVERTER_OBJECT_PIXEL_LIMIT = 1200000;
         const CONVERTER_DEFAULT_PRESET_NAMES = new Set(["Everything", "Carpets"]);
         const CONVERTER_CUSTOM_PRESETS_STORAGE_KEY = "mapartStudio.converterCustomPresets";
+        const CONVERTER_SELECTED_PRESET_STORAGE_KEY = "mapartStudio.converterSelectedPreset";
         const MAPARTCRAFT_VENDOR = window.MAPARTCRAFT_VENDOR_DATA || {};
         const MAPARTCRAFT_EXACT = window.MapartCraftExact || null;
         const converterSelectedBlockByColorId = {};
@@ -4338,6 +4356,7 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
         let converterPreviewVersion = 0;
         let converterPreviewWorker = null;
         let converterPreviewWorkerJobId = 0;
+        let converterMaterialScrollRestore = null;
         let converterIsPanning = false;
         let converterPreviousCropMode = converterCropMode.value;
         let converterPanStartX = 0;
@@ -4784,6 +4803,23 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
             }
         }
 
+        function loadConverterSelectedPresetName() {
+            try {
+                const storedName = normalizeConverterPresetName(localStorage.getItem(CONVERTER_SELECTED_PRESET_STORAGE_KEY));
+                return converterMapartPresetByName(storedName) ? storedName : "Everything";
+            } catch (error) {
+                return "Everything";
+            }
+        }
+
+        function persistConverterSelectedPresetName(name = converterPalettePresetName()) {
+            try {
+                localStorage.setItem(CONVERTER_SELECTED_PRESET_STORAGE_KEY, name);
+            } catch (error) {
+                converterPaletteStatus.textContent = "Preset selection storage failed";
+            }
+        }
+
         function updateConverterDeletePresetState() {
             if (!converterDeleteProfile) return;
             const presetName = converterPalettePresetName();
@@ -4893,6 +4929,19 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
             rememberConverterMapartSelection(colourSetId, converterMapartSelectedBlocks[colourSetId]);
             converterMapartSelectedBlocks[colourSetId] = "-1";
             syncLegacyConverterSelectionFromMapart(colourSetId);
+        }
+
+        function toggleConverterMapartColourSet(colourSetId, preserveMaterialViewport = false) {
+            if (converterPaletteLocked || !MAPARTCRAFT_VENDOR.coloursJSON?.[colourSetId]) return false;
+            if (preserveMaterialViewport) captureConverterMaterialViewport();
+            if (converterMapartSelectedBlocks[colourSetId] === "-1") {
+                includeConverterMapartColourSet(colourSetId);
+            } else {
+                excludeConverterMapartColourSet(colourSetId);
+            }
+            renderConverterPalette();
+            queueConverterPreview({ preserveMaterialViewport });
+            return true;
         }
 
         function applyConverterMapartPreset(presetName) {
@@ -5105,6 +5154,7 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
             }
             persistConverterCustomPresets();
             renderConverterPalettePresetOptions(name);
+            persistConverterSelectedPresetName(name);
             hideConverterPresetWindow();
             converterPaletteStatus.textContent = existingIndex === -1 ? "Preset saved" : "Preset updated";
         }
@@ -5125,6 +5175,7 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
             converterCustomPresets.splice(index, 1);
             persistConverterCustomPresets();
             renderConverterPalettePresetOptions("Everything");
+            persistConverterSelectedPresetName("Everything");
             applyConverterMapartPreset("Everything");
             renderConverterPalette();
             queueConverterPreview();
@@ -5239,14 +5290,7 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
                 excludeButton.setAttribute("aria-pressed", excluded ? "true" : "false");
                 excludeButton.disabled = converterPaletteLocked;
                 excludeButton.addEventListener("click", () => {
-                    if (converterPaletteLocked) return;
-                    if (converterMapartSelectedBlocks[colourSetId] === "-1") {
-                        includeConverterMapartColourSet(colourSetId);
-                    } else {
-                        excludeConverterMapartColourSet(colourSetId);
-                    }
-                    renderConverterPalette();
-                    queueConverterPreview();
+                    toggleConverterMapartColourSet(colourSetId);
                 });
                 row.appendChild(excludeButton);
 
@@ -5684,6 +5728,7 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
             converterOutputMeta.textContent = `${width} x ${height} pixels (${width / 128} x ${height / 128} maps)`;
             applyConverterZoom();
             renderConverterMaterials();
+            restoreConverterMaterialViewport();
             updateConverterModeControls();
         }
 
@@ -5691,6 +5736,7 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
             if (error) console.error(error);
             clearConverterConvertedOutput();
             renderConverterMaterials();
+            restoreConverterMaterialViewport();
             updateConverterModeControls();
             setConverterStatus("Conversion failed: " + message);
         }
@@ -5859,12 +5905,43 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
             setConverterZoomScale(Math.floor(fit / step) * step);
         }
 
+        function captureConverterMaterialViewport() {
+            const scroller = converterMaterialsList.closest(".converter-panel-body");
+            if (!scroller) return;
+            converterMaterialsList.style.minHeight = `${converterMaterialsList.offsetHeight}px`;
+            converterMaterialScrollRestore = {
+                scroller,
+                scrollTop: scroller.scrollTop
+            };
+        }
+
+        function restoreConverterMaterialViewport() {
+            if (!converterMaterialScrollRestore) return;
+            const { scroller, scrollTop } = converterMaterialScrollRestore;
+            converterMaterialScrollRestore = null;
+            scroller.scrollTop = scrollTop;
+            requestAnimationFrame(() => {
+                scroller.scrollTop = scrollTop;
+            });
+        }
+
+        function releaseConverterMaterialViewport() {
+            converterMaterialScrollRestore = null;
+            converterMaterialsList.style.minHeight = "";
+        }
+
+        function setConverterMaterialActionsDisabled(disabled) {
+            converterMaterialsList.querySelectorAll(".converter-material-exclude").forEach(button => {
+                button.disabled = disabled || converterPaletteLocked;
+            });
+        }
+
         function renderConverterMaterials() {
             converterMaterialsList.innerHTML = "";
             if (!converterHasConvertedOutput()) {
                 const row = document.createElement("div");
-                row.className = "converter-material-row";
-                row.innerHTML = "<span>No materials yet.</span><span>0</span>";
+                row.className = "converter-material-row message";
+                row.innerHTML = '<span class="converter-material-name">No materials yet.</span><span class="converter-material-amount">0</span>';
                 converterMaterialsList.appendChild(row);
                 converterDownloadMaterials.disabled = true;
                 return;
@@ -5872,8 +5949,8 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
             const entries = converterMaterialEntries();
             if (!entries.length) {
                 const row = document.createElement("div");
-                row.className = "converter-material-row";
-                row.innerHTML = "<span>No materials found.</span><span>0</span>";
+                row.className = "converter-material-row message";
+                row.innerHTML = '<span class="converter-material-name">No materials found.</span><span class="converter-material-amount">0</span>';
                 converterMaterialsList.appendChild(row);
                 converterDownloadMaterials.disabled = true;
                 return;
@@ -5881,9 +5958,33 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
             for (const entry of entries) {
                 const row = document.createElement("div");
                 row.className = "converter-material-row";
+                if (entry.support) {
+                    const placeholder = document.createElement("span");
+                    placeholder.className = "converter-material-action-placeholder";
+                    placeholder.setAttribute("aria-hidden", "true");
+                    row.appendChild(placeholder);
+                } else {
+                    const colourSet = MAPARTCRAFT_VENDOR.coloursJSON?.[entry.colourSetId];
+                    const excludeButton = document.createElement("button");
+                    excludeButton.type = "button";
+                    excludeButton.className = "converter-exclude-colour converter-material-exclude";
+                    excludeButton.dataset.colourSetId = entry.colourSetId;
+                    excludeButton.title = `Exclude ${colourSet?.colourName || entry.name}`;
+                    excludeButton.setAttribute("aria-label", excludeButton.title);
+                    excludeButton.setAttribute("aria-pressed", "false");
+                    excludeButton.disabled = converterPaletteLocked;
+                    excludeButton.addEventListener("click", () => {
+                        if (converterPaletteLocked) return;
+                        excludeButton.disabled = true;
+                        toggleConverterMapartColourSet(entry.colourSetId, true);
+                    });
+                    row.appendChild(excludeButton);
+                }
                 const name = document.createElement("span");
+                name.className = "converter-material-name";
                 name.textContent = entry.name;
                 const amount = document.createElement("span");
+                amount.className = "converter-material-amount";
                 amount.textContent = formatMaterialAmount(entry.count);
                 row.appendChild(name);
                 row.appendChild(amount);
@@ -5906,6 +6007,7 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
                 converterOutputMeta.textContent = `${converterCanvas.width} x ${converterCanvas.height} pixels`;
                 applyConverterZoom();
                 renderConverterMaterials();
+                restoreConverterMaterialViewport();
                 updateConverterModeControls();
                 return;
             }
@@ -5920,7 +6022,11 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
             converterEmptyState.style.display = "";
             converterOutputMeta.textContent = `${width} x ${height} pixels (${width / 128} x ${height / 128} maps)`;
             applyConverterZoom();
-            renderConverterMaterials();
+            if (converterMaterialScrollRestore) {
+                setConverterMaterialActionsDisabled(true);
+            } else {
+                renderConverterMaterials();
+            }
             updateConverterModeControls();
             setConverterStatus("Preparing source image...");
             requestAnimationFrame(() => {
@@ -5934,7 +6040,8 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
             });
         }
 
-        function queueConverterPreview() {
+        function queueConverterPreview({ preserveMaterialViewport = false } = {}) {
+            if (!preserveMaterialViewport) releaseConverterMaterialViewport();
             if (converterPreviewTimer) clearTimeout(converterPreviewTimer);
             converterPreviewQueued = true;
             converterPreviewTimer = setTimeout(runConverterPreview, 160);
@@ -6815,10 +6922,11 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
                 converterSelectedBlockByColorId[color.id] = selectedBlockByColorId[color.id] || color.blocks[0].key;
             }
             loadConverterCustomPresets();
-            renderConverterPalettePresetOptions("Everything");
+            const initialPresetName = loadConverterSelectedPresetName();
+            renderConverterPalettePresetOptions(initialPresetName);
             if (MAPARTCRAFT_EXACT && MAPARTCRAFT_VENDOR.coloursJSON) {
                 converterMapartDisabledTones = MAPARTCRAFT_EXACT.createDisabledTones(MAPARTCRAFT_VENDOR.coloursJSON);
-                resetConverterMapartPaletteToEverything();
+                applyConverterMapartPreset(initialPresetName);
             }
             SUPPORT_BLOCK_OPTIONS.filter(block => block.key !== NO_SUPPORT_BLOCK_KEY).forEach(block => {
                 const option = document.createElement("option");
@@ -6909,6 +7017,7 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
         converterFitPreview.addEventListener("click", fitConverterPreview);
         converterPalettePreset.addEventListener("change", () => {
             applyConverterMapartPreset(converterPalettePresetName());
+            persistConverterSelectedPresetName();
             converterPaletteStatus.textContent = converterPalettePresetName();
             renderConverterPalette();
             queueConverterPreview();
@@ -6916,6 +7025,7 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
         converterLockPalette.addEventListener("click", () => {
             converterPaletteLocked = !converterPaletteLocked;
             renderConverterPalette();
+            renderConverterMaterials();
         });
         converterSaveProfile.addEventListener("click", () => {
             showConverterPresetWindow();
