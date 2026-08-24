@@ -31,6 +31,7 @@ Mapart Studio derived/generated files:
 
 - `mapartcraft_exact.js`
 - `mapartcraft_vendor_data.js`
+- `converter-preview-worker.js`
 - Converter-related portions of `nbt_mapart_editor.html`
 
 Modification summary:
@@ -41,6 +42,8 @@ Modification summary:
 - Adapted palette selection, preset handling, material counting, support-block
   handling, dithering choices, NBT export, map.dat export, and editor handoff
   for Mapart Studio.
+- Moved converter preview generation into a Mapart Studio worker wrapper so the
+  MapArtCraft-derived conversion can run off the browser UI thread.
 - Added Mapart Studio UI controls, profile handling, and integration with the
   NBT editor workspace.
 
@@ -53,6 +56,6 @@ contributors. See `vendor/mapartcraft/README.md` for the upstream credit list.
 When distributing or hosting Mapart Studio, provide the complete corresponding
 source code for the distributed version under GPL-3.0. This repository source,
 including `vendor/mapartcraft`, `mapartcraft_exact.js`,
-`mapartcraft_vendor_data.js`, `nbt_mapart_editor.html`, `README.md`,
-`NOTICE.md`, and `LICENSE.txt`, is intended to be that corresponding source for
-the browser app.
+`mapartcraft_vendor_data.js`, `converter-preview-worker.js`,
+`nbt_mapart_editor.html`, `README.md`, `NOTICE.md`, and `LICENSE.txt`, is
+intended to be that corresponding source for the browser app.

@@ -435,6 +435,42 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
             font-size: 11px;
         }
 
+        .dither-brush-controls {
+            display: grid;
+            grid-template-columns: auto minmax(0, 1fr);
+            gap: 6px 7px;
+            align-items: center;
+        }
+
+        .dither-brush-controls[hidden] {
+            display: none;
+        }
+
+        .dither-brush-controls label {
+            display: contents;
+        }
+
+        .dither-brush-controls select {
+            width: 100%;
+            min-width: 0;
+            height: 25px;
+            background-color: #1e1e2e;
+            color: #cdd6f4;
+            border: 1px solid #6c7086;
+            padding: 3px 5px;
+            border-radius: 4px;
+            font-weight: bold;
+            font-size: 11px;
+        }
+
+        .dither-brush-status {
+            grid-column: 1 / -1;
+            min-height: 14px;
+            color: #a6adc8;
+            font-size: 10px;
+            line-height: 1.25;
+        }
+
         .tool-icon {
             position: relative;
             display: block;
@@ -2869,7 +2905,7 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
                     <section class="converter-panel converter-preview-panel">
                         <div class="converter-preview-toolbar">
                             <label>Preview zoom
-                                <input type="range" id="converterZoom" min="1" max="24" step="0.25" value="4">
+                                <input type="range" id="converterZoom" min="0.05" max="24" step="0.05" value="4">
                             </label>
                             <button id="converterFitPreview" type="button">Fit</button>
                         </div>
@@ -2966,6 +3002,7 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
                     <div class="tool-group" data-tooltip="Hold T and scroll to switch tools">
                         <select id="toolSelect" class="tool-select-hidden" aria-label="Tool">
                             <option value="brush">Brush</option>
+                            <option value="dither-brush" disabled>Dither Brush</option>
                             <option value="eraser">Eraser</option>
                             <option value="line">Line</option>
                             <option value="rectangle">Rectangle</option>
@@ -2979,6 +3016,7 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
                         </select>
                         <div class="tool-icon-grid" id="toolIconGrid" aria-label="Tools">
                             <button class="tool-icon-btn" type="button" data-tool="brush" data-tooltip="Brush"><svg class="tool-svg" viewBox="0 0 24 24" aria-hidden="true"><path class="bold" d="M4.5 18.7 16.4 6.8l2.8 2.8L7.3 21.5H4.5Z"/><path class="thin" d="M14.8 8.4l2.8 2.8M16.7 6.5l1.8-1.8 2.8 2.8-1.8 1.8"/></svg></button>
+                            <button class="tool-icon-btn" type="button" data-tool="dither-brush" data-tooltip="Dither Brush requires a converter image source" disabled><svg class="tool-svg" viewBox="0 0 24 24" aria-hidden="true"><path class="bold" d="M4.5 18.7 16.4 6.8l2.8 2.8L7.3 21.5H4.5Z"/><path class="thin" d="M14.8 8.4l2.8 2.8M16.7 6.5l1.8-1.8 2.8 2.8-1.8 1.8"/><path class="fill" d="M3 4h2v2H3zm5 0h2v2H8zM3 9h2v2H3z"/></svg></button>
                             <button class="tool-icon-btn" type="button" data-tool="eraser" data-tooltip="Eraser"><svg class="tool-svg" viewBox="0 0 24 24" aria-hidden="true"><path class="bold" d="M5 15.5 13.5 7l5.5 5.5-6.6 6.5H7.2Z"/><path class="thin" d="M10.2 10.3 15.7 15.8M7.2 19h11.5"/></svg></button>
                             <button class="tool-icon-btn" type="button" data-tool="line" data-tooltip="Line"><svg class="tool-svg" viewBox="0 0 24 24" aria-hidden="true"><path class="bold" d="M5 19 19 5"/></svg></button>
                             <button class="tool-icon-btn" type="button" data-tool="rectangle" data-tooltip="Rectangle"><svg class="tool-svg" viewBox="0 0 24 24" aria-hidden="true"><rect class="bold" x="4" y="6" width="16" height="12"/></svg></button>
@@ -3000,6 +3038,13 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
                                 <span class="tool-control-text">Support:</span>
                                 <select id="supportBlockSelect" data-tooltip="Support blocks are generated only when a placed block requires support"></select>
                             </label>
+                        </div>
+                        <div class="dither-brush-controls" id="editorDitherControls" hidden>
+                            <label for="editorDither">
+                                <span class="tool-control-text">Dithering:</span>
+                                <select id="editorDither"></select>
+                            </label>
+                            <div class="dither-brush-status" id="editorDitherStatus">Open converter output in the editor to enable this tool.</div>
                         </div>
                     </div>
                 </div>
@@ -4097,6 +4142,11 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
         let lassoPath = [];
         let pendingShapeStart = null;
         let previewSnapshot = null;
+        let editorDitherSource = null;
+        let editorDitherPixels = null;
+        let editorDitherTargetMethod = null;
+        let editorDitherWorker = null;
+        let editorDitherWorkerJobId = 0;
         
         // Panning coordinates
         let startPanX = 0;
@@ -4117,6 +4167,9 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
         const shapeSelectionBox = document.getElementById('shapeSelectionBox');
         const toolSelect = document.getElementById('toolSelect');
         const toolIconGrid = document.getElementById('toolIconGrid');
+        const editorDitherControls = document.getElementById('editorDitherControls');
+        const editorDither = document.getElementById('editorDither');
+        const editorDitherStatus = document.getElementById('editorDitherStatus');
         const canvasContainer = document.getElementById('canvasContainer');
         const toolGroup = document.querySelector('.tool-group');
         const hotbarArea = document.querySelector('.hotbar-area');
@@ -4256,6 +4309,7 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
         const converterOpenEditor = document.getElementById("converterOpenEditor");
 
         const CONVERTER_MAP_SIZE = 128;
+        const CONVERTER_OBJECT_PIXEL_LIMIT = 1200000;
         const CONVERTER_DEFAULT_PRESET_NAMES = new Set(["Everything", "Carpets"]);
         const CONVERTER_CUSTOM_PRESETS_STORAGE_KEY = "mapartStudio.converterCustomPresets";
         const MAPARTCRAFT_VENDOR = window.MAPARTCRAFT_VENDOR_DATA || {};
@@ -4276,10 +4330,14 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
         let converterImageNaturalWidth = 0;
         let converterImageNaturalHeight = 0;
         let converterPixels = [];
+        let converterConvertedPixelCount = 0;
         let converterMapColorBytes = null;
+        let converterZoomScale = Number(converterZoom.value) || 4;
         let converterPreviewQueued = false;
         let converterPreviewTimer = null;
         let converterPreviewVersion = 0;
+        let converterPreviewWorker = null;
+        let converterPreviewWorkerJobId = 0;
         let converterIsPanning = false;
         let converterPreviousCropMode = converterCropMode.value;
         let converterPanStartX = 0;
@@ -4363,17 +4421,58 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
             number.addEventListener("change", syncFromNumber);
         }
 
+        function converterHasConvertedOutput() {
+            return converterConvertedPixelCount > 0 &&
+                !!converterMapartMaterialsData &&
+                !!converterMapartMaterialsData.pixelsData &&
+                converterMapartMaterialsData.width === converterOutputWidth() &&
+                converterMapartMaterialsData.height === converterOutputHeight();
+        }
+
+        function clearConverterConvertedOutput() {
+            converterPixels = [];
+            converterConvertedPixelCount = 0;
+            converterMapColorBytes = null;
+            converterMapartMaterialsData = null;
+        }
+
+        function terminateConverterPreviewWorker() {
+            if (converterPreviewWorker) {
+                converterPreviewWorker.terminate();
+                converterPreviewWorker = null;
+            }
+        }
+
+        function cloneConverterDisabledTonesForWorker() {
+            const cloned = {};
+            for (const [colourSetId, tones] of Object.entries(converterMapartDisabledTones || {})) {
+                cloned[colourSetId] = tones instanceof Set ? new Set(tones) : new Set(tones || []);
+            }
+            return cloned;
+        }
+
+        function converterMapartConversionArgsForWorker() {
+            const args = converterMapartConversionArgs();
+            return {
+                ...args,
+                data: undefined,
+                selectedBlocks: { ...args.selectedBlocks },
+                disabledTones: cloneConverterDisabledTonesForWorker()
+            };
+        }
+
         function updateConverterModeControls() {
             const mapDat = converterMode.value === "mapdat";
+            const hasOutput = converterHasConvertedOutput();
             document.querySelectorAll(".converter-mapdat-only").forEach(row => {
                 row.style.display = mapDat ? "" : "none";
             });
-            converterDownloadNbt.disabled = !converterPixels.length || mapDat;
-            converterDownloadZip.disabled = !converterPixels.length || mapDat;
-            converterDownloadSingle.disabled = !converterPixels.length || mapDat;
-            converterDownloadMapDat.disabled = !converterPixels.length || !mapDat;
-            converterDownloadMapDatZip.disabled = !converterPixels.length || !mapDat;
-            converterOpenEditor.disabled = !converterPixels.length || mapDat;
+            converterDownloadNbt.disabled = !hasOutput || mapDat;
+            converterDownloadZip.disabled = !hasOutput || mapDat;
+            converterDownloadSingle.disabled = !hasOutput || mapDat;
+            converterDownloadMapDat.disabled = !hasOutput || !mapDat;
+            converterDownloadMapDatZip.disabled = !hasOutput || !mapDat;
+            converterOpenEditor.disabled = !hasOutput || mapDat;
         }
 
         function updateConverterManualCropControls() {
@@ -4484,7 +4583,7 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
             return methods[map[converterColorMethod.value] || "MapartCraftDefault"].uniqueId;
         }
 
-        function converterMapartDitherId() {
+        function mapartDitherIdForValue(value) {
             const methods = MAPARTCRAFT_VENDOR.DitherMethods || {};
             const map = {
                 none: "None",
@@ -4514,7 +4613,12 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
                 halftone_8: "Halftone88",
                 void_cluster_14: "VoidAndCluster1414"
             };
-            return methods[map[converterDither.value] || "None"].uniqueId;
+            const method = methods[map[value] || "None"] || methods.None;
+            return method ? method.uniqueId : 0;
+        }
+
+        function converterMapartDitherId() {
+            return mapartDitherIdForValue(converterDither.value);
         }
 
         function converterMapartCropModeId() {
@@ -5441,11 +5545,64 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
             });
         }
 
+        function mapColorShadeForTone(tone) {
+            return tone === "light" ? 2 : tone === "unobtainable" ? 3 : tone === "normal" ? 1 : 0;
+        }
+
         function mapColorByteForPixel(pixel) {
             if (!pixel || pixel.transparent) return 0;
-            const shade = pixel.tone === "light" ? 2 : pixel.tone === "unobtainable" ? 3 : pixel.tone === "normal" ? 1 : 0;
-            const mapartId = MAPARTCRAFT_VENDOR.coloursJSON[pixel.colourSetId]?.mapdatId ?? pixel.color?.mapartId ?? 0;
+            const shade = mapColorShadeForTone(pixel.tone);
+            const mapartId = MAPARTCRAFT_VENDOR.coloursJSON?.[pixel.colourSetId]?.mapdatId ?? pixel.color?.mapartId ?? 0;
             return mapartId * 4 + shade;
+        }
+
+        function mapColorByteForExactMatch(match) {
+            if (!match) return 1;
+            const shade = mapColorShadeForTone(match.tone);
+            const mapartId = MAPARTCRAFT_VENDOR.coloursJSON?.[match.colourSetId]?.mapdatId ?? (parseInt(match.colourSetId, 10) || 0);
+            return mapartId * 4 + shade;
+        }
+
+        function mapColorByteForConvertedDataOffset(data, offset) {
+            if (!data || data[offset + 3] === 0) return 0;
+            const match = converterExactColourForRgb([data[offset], data[offset + 1], data[offset + 2]]);
+            return mapColorByteForExactMatch(match);
+        }
+
+        function converterSelectedBlockIdForColourSet(colourSetId) {
+            const selectedBlocks = converterMapartMaterialsData?.currentSelectedBlocks || converterMapartSelectedBlocks;
+            return selectedBlocks[colourSetId];
+        }
+
+        function converterLegacyColorForColourSet(colourSetId) {
+            const colourSet = MAPARTCRAFT_VENDOR.coloursJSON?.[colourSetId];
+            return COLOR_BY_MAPART_ID.get(parseInt(colourSetId, 10)) || {
+                id: `mapart_${colourSetId}`,
+                mapartId: parseInt(colourSetId, 10),
+                label: colourSet?.colourName || `Map colour ${colourSetId}`,
+                blocks: []
+            };
+        }
+
+        function converterPixelFromConvertedDataOffset(data, offset) {
+            if (!data || data[offset + 3] === 0) return { transparent: true };
+            const rgb = [data[offset], data[offset + 1], data[offset + 2]];
+            const match = converterExactColourForRgb(rgb);
+            if (!match) {
+                return { transparent: false, colourSetId: null, tone: "normal", rgb };
+            }
+            const colourSet = MAPARTCRAFT_VENDOR.coloursJSON[match.colourSetId];
+            const selectedBlockId = converterSelectedBlockIdForColourSet(match.colourSetId);
+            return {
+                transparent: false,
+                colourSetId: match.colourSetId,
+                tone: match.tone,
+                rgb,
+                color: converterLegacyColorForColourSet(match.colourSetId),
+                colorId: converterLegacyColorForColourSet(match.colourSetId).id,
+                mapartBlockId: selectedBlockId,
+                mapartBlock: colourSet?.blocks?.[selectedBlockId] || null
+            };
         }
 
         function converterExactColourForRgb(rgb) {
@@ -5465,34 +5622,7 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
             const data = imageData.data;
             for (let index = 0; index < pixels.length; index++) {
                 const offset = index * 4;
-                if (data[offset + 3] === 0) {
-                    pixels[index] = { transparent: true };
-                    continue;
-                }
-                const rgb = [data[offset], data[offset + 1], data[offset + 2]];
-                const match = converterExactColourForRgb(rgb);
-                if (!match) {
-                    pixels[index] = { transparent: false, colourSetId: null, tone: "normal", rgb };
-                    continue;
-                }
-                const colourSet = MAPARTCRAFT_VENDOR.coloursJSON[match.colourSetId];
-                const legacyColor = COLOR_BY_MAPART_ID.get(parseInt(match.colourSetId, 10)) || {
-                    id: `mapart_${match.colourSetId}`,
-                    mapartId: parseInt(match.colourSetId, 10),
-                    label: colourSet.colourName,
-                    blocks: []
-                };
-                const selectedBlockId = converterMapartSelectedBlocks[match.colourSetId];
-                pixels[index] = {
-                    transparent: false,
-                    colourSetId: match.colourSetId,
-                    tone: match.tone,
-                    rgb,
-                    color: legacyColor,
-                    colorId: legacyColor.id,
-                    mapartBlockId: selectedBlockId,
-                    mapartBlock: colourSet.blocks[selectedBlockId] || null
-                };
+                pixels[index] = converterPixelFromConvertedDataOffset(data, offset);
             }
             return pixels;
         }
@@ -5504,14 +5634,141 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
             converterMapartMaterialsData = {
                 pixelsData: converted.pixels.data,
                 maps: converted.maps,
-                currentSelectedBlocks: { ...converted.currentSelectedBlocks }
+                currentSelectedBlocks: { ...converted.currentSelectedBlocks },
+                width,
+                height
             };
-            const pixels = converterPixelsFromExactImageData(converted.pixels, width, height);
-            const bytes = new Uint8Array(width * height);
-            pixels.forEach((pixel, index) => {
-                bytes[index] = mapColorByteForPixel(pixel);
-            });
-            return { pixels, bytes, imageData: converted.pixels };
+            const totalPixels = width * height;
+            const pixels = totalPixels <= CONVERTER_OBJECT_PIXEL_LIMIT
+                ? converterPixelsFromExactImageData(converted.pixels, width, height)
+                : [];
+            const bytes = new Uint8Array(totalPixels);
+            const data = converted.pixels.data;
+            for (let index = 0, offset = 0; index < totalPixels; index++, offset += 4) {
+                bytes[index] = mapColorByteForConvertedDataOffset(data, offset);
+            }
+            return {
+                pixels,
+                bytes,
+                imageData: converted.pixels,
+                pixelCount: totalPixels,
+                maps: converted.maps,
+                currentSelectedBlocks: converted.currentSelectedBlocks
+            };
+        }
+
+        function applyConverterPreviewResult(result) {
+            const width = result.width;
+            const height = result.height;
+            const pixelsData = result.pixelsData || new Uint8ClampedArray(result.pixelsBuffer);
+            const totalPixels = width * height;
+            converterMapartMaterialsData = {
+                pixelsData,
+                maps: result.maps,
+                currentSelectedBlocks: { ...(result.currentSelectedBlocks || {}) },
+                width,
+                height
+            };
+            converterPixels = totalPixels <= CONVERTER_OBJECT_PIXEL_LIMIT
+                ? converterPixelsFromExactImageData({ data: pixelsData }, width, height)
+                : [];
+            converterConvertedPixelCount = totalPixels;
+            converterMapColorBytes = result.mapColorBytes || new Uint8Array(result.mapColorBytesBuffer);
+            converterCanvas.width = width;
+            converterCanvas.height = height;
+            converterCtx.putImageData(new ImageData(pixelsData, width, height), 0, 0);
+            drawConverterGrid(width, height);
+            converterEmptyState.textContent = "No image loaded";
+            converterEmptyState.style.display = "none";
+            converterImageMeta.textContent = `${converterImageBaseName} - ${converterImageNaturalWidth} x ${converterImageNaturalHeight}`;
+            converterOutputMeta.textContent = `${width} x ${height} pixels (${width / 128} x ${height / 128} maps)`;
+            applyConverterZoom();
+            renderConverterMaterials();
+            updateConverterModeControls();
+        }
+
+        function failConverterPreview(message, error) {
+            if (error) console.error(error);
+            clearConverterConvertedOutput();
+            renderConverterMaterials();
+            updateConverterModeControls();
+            setConverterStatus("Conversion failed: " + message);
+        }
+
+        function runConverterPreviewSynchronous(version, width, height, sourceImage) {
+            if (version !== converterPreviewVersion) return;
+            try {
+                const converted = convertImageDataToMapPixels(sourceImage, width, height);
+                if (version !== converterPreviewVersion) return;
+                applyConverterPreviewResult({
+                    width,
+                    height,
+                    pixelsData: converted.imageData.data,
+                    mapColorBytes: converted.bytes,
+                    maps: converted.maps,
+                    currentSelectedBlocks: converted.currentSelectedBlocks
+                });
+                setConverterStatus("Preview ready.");
+            } catch (error) {
+                failConverterPreview(error.message, error);
+            }
+        }
+
+        function startConverterPreviewWorker(version, width, height, sourceImage) {
+            if (typeof Worker === "undefined") {
+                runConverterPreviewSynchronous(version, width, height, sourceImage);
+                return;
+            }
+
+            terminateConverterPreviewWorker();
+            const jobId = ++converterPreviewWorkerJobId;
+            const worker = new Worker("converter-preview-worker.js");
+            converterPreviewWorker = worker;
+
+            const finishWorker = () => {
+                if (converterPreviewWorker === worker) converterPreviewWorker = null;
+                worker.terminate();
+            };
+
+            worker.onmessage = event => {
+                const message = event.data || {};
+                if (message.jobId !== jobId || version !== converterPreviewVersion || converterPreviewWorker !== worker) return;
+
+                if (message.type === "progress") {
+                    const percent = Math.max(0, Math.min(99, Math.floor((Number(message.progress) || 0) * 100)));
+                    setConverterStatus(`Converting preview... ${percent}%`);
+                    return;
+                }
+
+                if (message.type === "result") {
+                    finishWorker();
+                    applyConverterPreviewResult(message);
+                    setConverterStatus("Preview ready.");
+                    return;
+                }
+
+                if (message.type === "error") {
+                    finishWorker();
+                    failConverterPreview(message.message || "Worker error");
+                }
+            };
+
+            worker.onerror = event => {
+                if (version !== converterPreviewVersion || converterPreviewWorker !== worker) return;
+                finishWorker();
+                failConverterPreview(event.message || "Worker error", event.error || event);
+            };
+
+            setConverterStatus("Converting preview... 0%");
+            const conversionArgs = converterMapartConversionArgsForWorker();
+            worker.postMessage({
+                type: "convert",
+                jobId,
+                width,
+                height,
+                sourceBuffer: sourceImage.data.buffer,
+                conversionArgs
+            }, [sourceImage.data.buffer]);
         }
 
         function drawConverterGrid(width, height) {
@@ -5537,28 +5794,39 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
         function applyConverterZoom() {
             const width = converterCanvas.width || converterOutputWidth();
             const height = converterCanvas.height || converterOutputHeight();
-            const scale = Number(converterZoom.value) || 4;
+            converterZoomScale = clampConverterZoomScale(converterZoomScale);
+            converterZoom.value = String(converterZoomScale);
+            const scale = converterZoomScale;
             converterCanvas.style.width = `${Math.max(1, Math.floor(width * scale))}px`;
             converterCanvas.style.height = `${Math.max(1, Math.floor(height * scale))}px`;
         }
 
         function clampConverterZoomScale(scale) {
-            const min = Number(converterZoom.min) || 1;
+            const min = Number(converterZoom.min) || 0.05;
             const max = Number(converterZoom.max) || 24;
             return Math.max(min, Math.min(max, scale));
+        }
+
+        function setConverterZoomScale(scale) {
+            converterZoomScale = clampConverterZoomScale(scale);
+            converterZoom.value = String(converterZoomScale);
+            applyConverterZoom();
         }
 
         function setConverterZoomAtPoint(nextScale, clientX, clientY) {
             const width = converterCanvas.width || converterOutputWidth();
             const height = converterCanvas.height || converterOutputHeight();
             if (width <= 0 || height <= 0) {
-                converterZoom.value = String(clampConverterZoomScale(nextScale));
-                applyConverterZoom();
+                setConverterZoomScale(nextScale);
                 return;
             }
 
             const rectBefore = converterCanvas.getBoundingClientRect();
             const containerRectBefore = converterCanvasContainer.getBoundingClientRect();
+            if (rectBefore.width <= 0 || rectBefore.height <= 0) {
+                setConverterZoomScale(nextScale);
+                return;
+            }
             const mouseContentX = clientX - containerRectBefore.left - converterCanvasContainer.clientLeft;
             const mouseContentY = clientY - containerRectBefore.top - converterCanvasContainer.clientTop;
             const renderedScaleX = rectBefore.width / width;
@@ -5566,8 +5834,7 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
             const mapXUnderMouse = (clientX - rectBefore.left) / renderedScaleX;
             const mapYUnderMouse = (clientY - rectBefore.top) / renderedScaleY;
 
-            converterZoom.value = String(clampConverterZoomScale(nextScale));
-            applyConverterZoom();
+            setConverterZoomScale(nextScale);
 
             const rectAfter = converterCanvas.getBoundingClientRect();
             const containerRectAfter = converterCanvasContainer.getBoundingClientRect();
@@ -5585,14 +5852,16 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
             const width = converterCanvas.width || converterOutputWidth();
             const height = converterCanvas.height || converterOutputHeight();
             const rect = converterCanvasContainer.getBoundingClientRect();
-            const fit = Math.max(1, Math.min(24, Math.min((rect.width - 54) / width, (rect.height - 54) / height)));
-            converterZoom.value = String(Math.max(1, Math.floor(fit * 4) / 4));
-            applyConverterZoom();
+            const availableWidth = Math.max(1, rect.width - 54);
+            const availableHeight = Math.max(1, rect.height - 54);
+            const fit = clampConverterZoomScale(Math.min(availableWidth / width, availableHeight / height));
+            const step = Number(converterZoom.step) || 0.05;
+            setConverterZoomScale(Math.floor(fit / step) * step);
         }
 
         function renderConverterMaterials() {
             converterMaterialsList.innerHTML = "";
-            if (!converterPixels.length) {
+            if (!converterHasConvertedOutput()) {
                 const row = document.createElement("div");
                 row.className = "converter-material-row";
                 row.innerHTML = "<span>No materials yet.</span><span>0</span>";
@@ -5626,10 +5895,9 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
         function runConverterPreview() {
             converterPreviewQueued = false;
             const version = ++converterPreviewVersion;
+            terminateConverterPreviewWorker();
             if (!converterImageElement) {
-                converterPixels = [];
-                converterMapColorBytes = null;
-                converterMapartMaterialsData = null;
+                clearConverterConvertedOutput();
                 converterEmptyState.textContent = "No image loaded";
                 converterEmptyState.style.display = "";
                 converterCanvas.width = converterOutputWidth();
@@ -5644,48 +5912,24 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
 
             const width = converterOutputWidth();
             const height = converterOutputHeight();
-            const totalPixels = width * height;
-            if (totalPixels > 1200000) {
-                converterPixels = [];
-                converterMapColorBytes = null;
-                converterMapartMaterialsData = null;
-                converterCanvas.width = width;
-                converterCanvas.height = height;
-                converterCtx.clearRect(0, 0, width, height);
-                converterEmptyState.style.display = "";
-                converterEmptyState.textContent = "Preview too large";
-                converterOutputMeta.textContent = `${width} x ${height} pixels`;
-                renderConverterMaterials();
-                updateConverterModeControls();
-                applyConverterZoom();
-                setConverterStatus("Preview is capped for very large outputs. Reduce map size for browser conversion.");
-                return;
-            }
-
-            setConverterStatus("Converting preview...");
+            clearConverterConvertedOutput();
+            converterCanvas.width = width;
+            converterCanvas.height = height;
+            converterCtx.clearRect(0, 0, width, height);
+            converterEmptyState.textContent = "Converting preview...";
+            converterEmptyState.style.display = "";
+            converterOutputMeta.textContent = `${width} x ${height} pixels (${width / 128} x ${height / 128} maps)`;
+            applyConverterZoom();
+            renderConverterMaterials();
+            updateConverterModeControls();
+            setConverterStatus("Preparing source image...");
             requestAnimationFrame(() => {
                 if (version !== converterPreviewVersion) return;
                 try {
-                    converterCanvas.width = width;
-                    converterCanvas.height = height;
                     const sourceImage = sourceImageDataForConverter(width, height);
-                    const converted = convertImageDataToMapPixels(sourceImage, width, height);
-                    converterPixels = converted.pixels;
-                    converterMapColorBytes = converted.bytes;
-                    converterCtx.putImageData(converted.imageData, 0, 0);
-                    drawConverterGrid(width, height);
-                    converterEmptyState.textContent = "No image loaded";
-                    converterEmptyState.style.display = "none";
-                    converterImageMeta.textContent = `${converterImageBaseName} - ${converterImageNaturalWidth} x ${converterImageNaturalHeight}`;
-                    converterOutputMeta.textContent = `${width} x ${height} pixels (${width / 128} x ${height / 128} maps)`;
-                    applyConverterZoom();
-                    renderConverterMaterials();
-                    updateConverterModeControls();
-                    setConverterStatus("Preview ready.");
+                    startConverterPreviewWorker(version, width, height, sourceImage);
                 } catch (error) {
-                    console.error(error);
-                    converterMapartMaterialsData = null;
-                    setConverterStatus("Conversion failed: " + error.message);
+                    failConverterPreview(error.message, error);
                 }
             });
         }
@@ -5748,7 +5992,23 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
 
         function converterPixelAt(x, y, fullWidth = converterOutputWidth()) {
             if (x < 0 || y < 0 || x >= fullWidth) return null;
-            return converterPixels[y * fullWidth + x] || null;
+            const dataWidth = converterMapartMaterialsData?.width || fullWidth;
+            const dataHeight = converterMapartMaterialsData?.height || converterOutputHeight();
+            if (x >= dataWidth || y >= dataHeight) return null;
+            const index = y * dataWidth + x;
+            if (converterPixels.length && index < converterPixels.length) return converterPixels[index] || null;
+            const data = converterMapartMaterialsData?.pixelsData;
+            if (!data) return null;
+            return converterPixelFromConvertedDataOffset(data, index * 4);
+        }
+
+        function converterMapColorByteAt(x, y, fullWidth = converterOutputWidth()) {
+            if (x < 0 || y < 0 || x >= fullWidth) return 0;
+            const index = y * fullWidth + x;
+            if (converterMapColorBytes && index < converterMapColorBytes.length) {
+                return converterMapColorBytes[index];
+            }
+            return mapColorByteForPixel(converterPixelAt(x, y, fullWidth));
         }
 
         function converterNbtToneForPixel(pixel) {
@@ -6160,7 +6420,7 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
         }
 
         function createConverterNbtRoot(bounds = {}) {
-            if (!converterPixels.length) throw new Error("Convert an image first.");
+            if (!converterHasConvertedOutput()) throw new Error("Convert an image first.");
             const fullWidth = converterOutputWidth();
             const fullHeight = converterOutputHeight();
             const startX = bounds.startX || 0;
@@ -6222,7 +6482,7 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
         }
 
         async function downloadConverterZip() {
-            if (!converterPixels.length) return;
+            if (!converterHasConvertedOutput()) return;
             try {
                 const entries = [];
                 const fullWidth = converterOutputWidth();
@@ -6251,8 +6511,7 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
             const colors = new Int8Array(CONVERTER_MAP_SIZE * CONVERTER_MAP_SIZE);
             for (let y = 0; y < CONVERTER_MAP_SIZE; y++) {
                 for (let x = 0; x < CONVERTER_MAP_SIZE; x++) {
-                    const pixel = converterPixelAt(startX + x, startY + y, fullWidth);
-                    colors[y * CONVERTER_MAP_SIZE + x] = pixel ? mapColorByteForPixel(pixel) : 0;
+                    colors[y * CONVERTER_MAP_SIZE + x] = converterMapColorByteAt(startX + x, startY + y, fullWidth);
                 }
             }
             return {
@@ -6280,7 +6539,7 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
         }
 
         function downloadConverterMapDat() {
-            if (!converterPixels.length) return;
+            if (!converterHasConvertedOutput()) return;
             try {
                 const idSuffix = converterUseMapId.checked ? `_${Number(converterStartId.value) || 0}` : "";
                 downloadBlob(gzipNbtRoot(createConverterMapDatRoot()), `map${idSuffix}.dat`);
@@ -6290,7 +6549,7 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
         }
 
         async function downloadConverterMapDatZip() {
-            if (!converterPixels.length) return;
+            if (!converterHasConvertedOutput()) return;
             try {
                 const entries = [];
                 const fullWidth = converterOutputWidth();
@@ -6310,14 +6569,221 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
             }
         }
 
-        function converterEditorExactPixelsSnapshot() {
+        function cloneDitherConversionArgs(args) {
+            const disabledTones = {};
+            for (const [colourSetId, tones] of Object.entries(args?.disabledTones || {})) {
+                disabledTones[colourSetId] = tones instanceof Set ? new Set(tones) : new Set(tones || []);
+            }
+            return {
+                ...(args || {}),
+                data: undefined,
+                selectedBlocks: { ...(args?.selectedBlocks || {}) },
+                disabledTones
+            };
+        }
+
+        function editorDitherSourceAvailable() {
+            return !!(
+                editorDitherSource &&
+                editorDitherSource.width === mapWidth &&
+                editorDitherSource.height === mapHeight &&
+                editorDitherSource.data &&
+                editorDitherSource.data.length === mapWidth * mapHeight * 4
+            );
+        }
+
+        function setEditorDitherStatus(message) {
+            if (editorDitherStatus) editorDitherStatus.textContent = message || "";
+        }
+
+        function terminateEditorDitherWorker() {
+            if (editorDitherWorker) {
+                editorDitherWorker.terminate();
+                editorDitherWorker = null;
+            }
+        }
+
+        function updateEditorDitherControls() {
+            const available = editorDitherSourceAvailable();
+            const option = toolSelect.querySelector('option[value="dither-brush"]');
+            const button = toolIconGrid.querySelector('[data-tool="dither-brush"]');
+            if (option) option.disabled = !available;
+            if (button) {
+                button.disabled = !available;
+                button.dataset.tooltip = available
+                    ? "Dither Brush"
+                    : "Dither Brush requires a converter image source";
+            }
+            if (editorDitherControls) editorDitherControls.hidden = activeTool !== "dither-brush";
+            if (!available) {
+                setEditorDitherStatus("Open converter output in the editor to enable this tool.");
+            } else if (editorDitherPixels && editorDitherTargetMethod === editorDither.value) {
+                setEditorDitherStatus("Exact dither target ready.");
+            }
+        }
+
+        function clearEditorDitherSource(options = {}) {
+            terminateEditorDitherWorker();
+            editorDitherWorkerJobId++;
+            editorDitherSource = null;
+            editorDitherPixels = null;
+            editorDitherTargetMethod = null;
+            if (!options.keepTool && activeTool === "dither-brush") setActiveTool("brush");
+            updateEditorDitherControls();
+        }
+
+        function setEditorDitherSource(snapshot) {
+            clearEditorDitherSource({ keepTool: true });
+            if (
+                !snapshot ||
+                snapshot.width !== mapWidth ||
+                snapshot.height !== mapHeight ||
+                !snapshot.data ||
+                snapshot.data.length !== mapWidth * mapHeight * 4
+            ) {
+                if (activeTool === "dither-brush") setActiveTool("brush");
+                updateEditorDitherControls();
+                return;
+            }
+            editorDitherSource = {
+                width: snapshot.width,
+                height: snapshot.height,
+                data: new Uint8ClampedArray(snapshot.data),
+                conversionArgs: cloneDitherConversionArgs(snapshot.conversionArgs)
+            };
+            updateEditorDitherControls();
+            if (activeTool === "dither-brush") prepareEditorDitherTarget();
+        }
+
+        function applyEditorDitherWorkerResult(method, pixelsData) {
+            if (!editorDitherSourceAvailable() || method !== editorDither.value) return;
+            if (!pixelsData || pixelsData.length !== mapWidth * mapHeight * 4) {
+                setEditorDitherStatus("Dither calculation returned invalid pixel data.");
+                return;
+            }
+            editorDitherPixels = pixelsData;
+            editorDitherTargetMethod = method;
+            setEditorDitherStatus("Exact dither target ready.");
+            updateEditorDitherControls();
+            updateCursorPreview(lastMouseX, lastMouseZ);
+        }
+
+        function runEditorDitherTargetSynchronously(jobId, method, sourceData, conversionArgs) {
+            requestAnimationFrame(() => {
+                if (jobId !== editorDitherWorkerJobId || !editorDitherSourceAvailable()) return;
+                try {
+                    const exact = requireMapartCraftExact();
+                    const converted = exact.convertImageData(
+                        new ImageData(sourceData, mapWidth, mapHeight),
+                        { ...conversionArgs, data: MAPARTCRAFT_VENDOR }
+                    );
+                    if (jobId !== editorDitherWorkerJobId) return;
+                    applyEditorDitherWorkerResult(method, converted.pixels.data);
+                } catch (error) {
+                    console.error(error);
+                    setEditorDitherStatus("Dither calculation failed: " + error.message);
+                }
+            });
+        }
+
+        function prepareEditorDitherTarget() {
+            if (!editorDitherSourceAvailable()) {
+                updateEditorDitherControls();
+                return false;
+            }
+            const method = editorDither.value || "none";
+            if (
+                editorDitherPixels &&
+                editorDitherTargetMethod === method &&
+                editorDitherPixels.length === mapWidth * mapHeight * 4
+            ) {
+                setEditorDitherStatus("Exact dither target ready.");
+                return true;
+            }
+
+            terminateEditorDitherWorker();
+            const jobId = ++editorDitherWorkerJobId;
+            editorDitherPixels = null;
+            editorDitherTargetMethod = null;
+            setEditorDitherStatus("Calculating exact dither target... 0%");
+
+            const sourceData = new Uint8ClampedArray(editorDitherSource.data);
+            const conversionArgs = cloneDitherConversionArgs(editorDitherSource.conversionArgs);
+            conversionArgs.dithering = mapartDitherIdForValue(method);
+
+            if (typeof Worker === "undefined") {
+                runEditorDitherTargetSynchronously(jobId, method, sourceData, conversionArgs);
+                return false;
+            }
+
+            const worker = new Worker("converter-preview-worker.js");
+            editorDitherWorker = worker;
+            worker.onmessage = event => {
+                const message = event.data || {};
+                if (message.jobId !== jobId || jobId !== editorDitherWorkerJobId || editorDitherWorker !== worker) return;
+                if (message.type === "progress") {
+                    const percent = Math.max(0, Math.min(99, Math.floor((Number(message.progress) || 0) * 100)));
+                    setEditorDitherStatus(`Calculating exact dither target... ${percent}%`);
+                    return;
+                }
+                if (message.type === "result") {
+                    editorDitherWorker = null;
+                    worker.terminate();
+                    applyEditorDitherWorkerResult(method, new Uint8ClampedArray(message.pixelsBuffer));
+                    return;
+                }
+                if (message.type === "error") {
+                    editorDitherWorker = null;
+                    worker.terminate();
+                    setEditorDitherStatus("Dither calculation failed: " + (message.message || "Worker error"));
+                }
+            };
+            worker.onerror = event => {
+                if (jobId !== editorDitherWorkerJobId || editorDitherWorker !== worker) return;
+                editorDitherWorker = null;
+                worker.terminate();
+                setEditorDitherStatus("Dither calculation failed: " + (event.message || "Worker error"));
+            };
+            worker.postMessage({
+                type: "convert",
+                jobId,
+                width: mapWidth,
+                height: mapHeight,
+                sourceBuffer: sourceData.buffer,
+                conversionArgs
+            }, [sourceData.buffer]);
+            return false;
+        }
+
+        function converterEditorDitherSourceSnapshot() {
             const width = converterOutputWidth();
             const height = converterOutputHeight();
-            if (!converterPixels.length || converterPixels.length !== width * height) return null;
+            if (!converterHasConvertedOutput() || !converterImageElement) return null;
+            const source = sourceImageDataForConverter(width, height);
             return {
                 width,
                 height,
-                pixels: converterPixels.map(pixel => pixel && !pixel.transparent ? {
+                data: new Uint8ClampedArray(source.data),
+                conversionArgs: converterMapartConversionArgsForWorker()
+            };
+        }
+
+        function converterEditorExactPixelsSnapshot() {
+            const width = converterOutputWidth();
+            const height = converterOutputHeight();
+            if (!converterHasConvertedOutput() || converterConvertedPixelCount !== width * height) return null;
+            if (converterConvertedPixelCount > CONVERTER_OBJECT_PIXEL_LIMIT) return null;
+            const pixels = converterPixels.length === converterConvertedPixelCount
+                ? converterPixels
+                : Array.from({ length: converterConvertedPixelCount }, (_, index) => {
+                    const x = index % width;
+                    const y = Math.floor(index / width);
+                    return converterPixelAt(x, y, width);
+                });
+            return {
+                width,
+                height,
+                pixels: pixels.map(pixel => pixel && !pixel.transparent ? {
                     rgb: Array.isArray(pixel.rgb) ? pixel.rgb.slice(0, 3) : null,
                     tone: pixel.tone || "normal",
                     colourSetId: pixel.colourSetId || null,
@@ -6327,12 +6793,16 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
         }
 
         async function openConverterOutputInEditor() {
-            if (!converterPixels.length) return;
+            if (!converterHasConvertedOutput()) return;
             if (loadedFiles.length > 0 && !confirm("Replace the currently loaded editor data with this converter output?")) return;
             try {
+                const ditherSource = converterEditorDitherSourceSnapshot();
                 const data = gzipNbtRoot(createConverterNbtRoot());
                 const file = new File([data], `${converterBaseName()}_combined.nbt`, { type: "application/octet-stream" });
-                await loadEditorNbtFiles([file], { exactPixels: converterEditorExactPixelsSnapshot() });
+                await loadEditorNbtFiles([file], {
+                    exactPixels: converterEditorExactPixelsSnapshot(),
+                    ditherSource
+                });
                 switchStudioWorkspace("editor");
             } catch (error) {
                 setConverterStatus("Open in Editor failed: " + error.message);
@@ -6433,7 +6903,9 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
             queueConverterPreview();
         });
 
-        converterZoom.addEventListener("input", applyConverterZoom);
+        converterZoom.addEventListener("input", () => {
+            setConverterZoomScale(Number(converterZoom.value) || converterZoomScale);
+        });
         converterFitPreview.addEventListener("click", fitConverterPreview);
         converterPalettePreset.addEventListener("change", () => {
             applyConverterMapartPreset(converterPalettePresetName());
@@ -6513,7 +6985,7 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
         });
         converterCanvasContainer.addEventListener("wheel", event => {
             event.preventDefault();
-            const current = Number(converterZoom.value) || 4;
+            const current = converterZoomScale || 4;
             const direction = event.deltaY > 0 ? -1 : 1;
             const next = current + direction * 0.15 * current;
             setConverterZoomAtPoint(next, event.clientX, event.clientY);
@@ -6521,7 +6993,23 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
 
         initializeConverterUi();
 
+        editorDither.innerHTML = converterDither.innerHTML;
+        editorDither.value = "floyd_steinberg";
+        editorDither.addEventListener("change", () => {
+            terminateEditorDitherWorker();
+            editorDitherWorkerJobId++;
+            editorDitherPixels = null;
+            editorDitherTargetMethod = null;
+            prepareEditorDitherTarget();
+            updateCursorPreview(lastMouseX, lastMouseZ);
+        });
+        updateEditorDitherControls();
+
         function setActiveTool(toolValue, rememberPrevious = true) {
+            if (toolValue === "dither-brush" && !editorDitherSourceAvailable()) {
+                setEditorDitherStatus("Open converter output in the editor to enable this tool.");
+                return;
+            }
             if (toolValue !== activeTool) {
                 clearPendingShapeStart();
             }
@@ -6543,12 +7031,14 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
             activeTool = toolValue;
             toolSelect.value = toolValue;
             updateToolIconButtons();
+            updateEditorDitherControls();
             if (toolValue === 'text') {
                 const anchor = textToolAnchor || defaultTextToolAnchor();
                 showTextToolPopup(anchor.x, anchor.z);
             } else {
                 updateCursorPreview(lastMouseX, lastMouseZ);
             }
+            if (toolValue === "dither-brush") prepareEditorDitherTarget();
         }
 
         function restoreToolAfterPicker() {
@@ -8798,6 +9288,7 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
             const files = Array.from(fileList);
             if (files.length === 0) return;
 
+            clearEditorDitherSource();
             originalFileName = files[0].name.replace('.nbt', '').replace(/_[0-9\-]+_[0-9\-]+$/, '');
             document.getElementById('saveZipBtn').innerText = "Processing...";
             resetPaletteSelectionsToDefaults();
@@ -8997,6 +9488,7 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
             canvas.height = mapHeight;
             previewCanvas.width = mapWidth;
             previewCanvas.height = mapHeight;
+            setEditorDitherSource(options.ditherSource || null);
 
             currentScale = Math.min(4, 512 / Math.max(mapWidth, mapHeight));
             applyZoom();
@@ -9507,6 +9999,120 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
             return Array.from(cellsToRecord, cell => supportChangeRecordForCell(cell));
         }
 
+        function editorDitherTargetAt(x, z) {
+            if (
+                !editorDitherPixels ||
+                editorDitherTargetMethod !== editorDither.value ||
+                x < 0 || x >= mapWidth || z < 0 || z >= mapHeight
+            ) return null;
+            const offset = (z * mapWidth + x) * 4;
+            if (editorDitherPixels[offset + 3] === 0) return null;
+            const rgb = [
+                editorDitherPixels[offset],
+                editorDitherPixels[offset + 1],
+                editorDitherPixels[offset + 2]
+            ];
+            const match = converterExactColourForRgb(rgb);
+            if (!match) return null;
+            const color = converterLegacyColorForColourSet(match.colourSetId);
+            if (!color || !COLORS_BY_ID.has(color.id)) return null;
+            const block = selectedBlockForColor(color);
+            if (!block) return null;
+            return {
+                color,
+                block,
+                tone: MAP_TONES.includes(match.tone) ? match.tone : "normal",
+                rgb,
+                colourSetId: match.colourSetId
+            };
+        }
+
+        function paintDitherCells(cells, updateCanvasDirectly) {
+            if (!editorDitherSourceAvailable()) {
+                setEditorDitherStatus("Open converter output in the editor to enable this tool.");
+                return false;
+            }
+            if (!editorDitherPixels || editorDitherTargetMethod !== editorDither.value) {
+                prepareEditorDitherTarget();
+                return false;
+            }
+
+            const layer = activeLayer();
+            if (!layerCanPaint(layer)) return false;
+            const targets = uniqueCells(cells)
+                .map(cell => ({ cell, target: editorDitherTargetAt(cell.globalX, cell.globalZ) }))
+                .filter(item => item.target);
+            if (targets.length === 0) return false;
+
+            if (layer.kind === "paint") {
+                let changed = false;
+                for (const { cell, target } of targets) {
+                    const key = layerCellKey(cell.globalX, cell.globalZ);
+                    const targetCell = {
+                        colorId: target.color.id,
+                        blockKey: target.block.key,
+                        tone: paletteMode === "staircased" ? normalizeTone(target.tone) : null
+                    };
+                    const existing = layer.cells.get(key);
+                    if (
+                        existing &&
+                        existing.colorId === targetCell.colorId &&
+                        existing.blockKey === targetCell.blockKey &&
+                        (existing.tone || null) === (targetCell.tone || null)
+                    ) continue;
+                    layer.cells.set(key, targetCell);
+                    changed = true;
+                }
+                if (changed) {
+                    renderLayers();
+                    renderFullCanvas();
+                }
+                return changed;
+            }
+
+            const targetItems = [];
+            for (const { cell, target } of targets) {
+                const currentInfo = updateCellMetadata(cell);
+                const stateChanged = !currentInfo ||
+                    currentInfo.color.id !== target.color.id ||
+                    currentInfo.block.key !== target.block.key;
+                const toneChanged = paletteMode === "staircased" && staircasedToneForCell(cell) !== target.tone;
+                if (!stateChanged && !toneChanged) continue;
+                targetItems.push({
+                    cell,
+                    target,
+                    targetPaletteIndex: ensurePaletteState(cell.file, target.block)
+                });
+            }
+            if (targetItems.length === 0) return false;
+
+            const changedCells = targetItems.map(item => item.cell);
+            const supportRecords = supportRecordsForPaintTargets(changedCells, paletteMode === "staircased");
+            const toneOverridesByColumn = new Map();
+
+            for (const item of targetItems) {
+                item.cell.blockRef.state.value = item.targetPaletteIndex;
+                item.cell.colorId = item.target.color.id;
+                item.cell.blockKey = item.target.block.key;
+                clearCellExactPreview(item.cell);
+                if (paletteMode === "staircased") {
+                    if (!toneOverridesByColumn.has(item.cell.globalX)) toneOverridesByColumn.set(item.cell.globalX, new Map());
+                    toneOverridesByColumn.get(item.cell.globalX).set(item.cell, item.target.tone);
+                }
+            }
+
+            toneOverridesByColumn.forEach((overrides, globalX) => solveColumnTones(globalX, overrides));
+            for (const item of targetItems) {
+                item.cell.exactRgb = item.target.rgb.slice(0, 3);
+                item.cell.exactTone = item.target.tone;
+                item.cell.exactColourSetId = item.target.colourSetId;
+                item.cell.exactMapartBlockId = null;
+            }
+            syncSupportsForCells(supportRecords);
+            renderFullCanvas();
+            return true;
+        }
+
         function paintCells(cells, updateCanvasDirectly) {
             const targetBlock = selectedBlockForColor(selectedColor);
             if (!targetBlock) return false;
@@ -9717,6 +10323,18 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
 
         function applyBrush(cx, cz, updateCanvasDirectly) {
             return paintCells(brushCellsAt(cx, cz), updateCanvasDirectly);
+        }
+
+        function applyDitherBrush(cx, cz, updateCanvasDirectly) {
+            return paintDitherCells(brushCellsAt(cx, cz), updateCanvasDirectly);
+        }
+
+        function drawDitherLine(x0, z0, x1, z1, updateCanvasDirectly, brushSize = currentBrushSize()) {
+            const cells = [];
+            for (const point of linePoints(x0, z0, x1, z1)) {
+                cells.push(...brushCellsAtSize(point.x, point.z, brushSize));
+            }
+            return paintDitherCells(cells, updateCanvasDirectly);
         }
 
         function eraseCells(cells, updateCanvasDirectly) {
@@ -11179,6 +11797,18 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
             }
         }
 
+        function previewDitherBrush(cx, cz, size, offsetStart) {
+            const offsetEnd = size - offsetStart - 1;
+            for (let bx = cx - offsetStart; bx <= cx + offsetEnd; bx++) {
+                for (let bz = cz - offsetStart; bz <= cz + offsetEnd; bz++) {
+                    const target = editorDitherTargetAt(bx, bz);
+                    if (!target) continue;
+                    previewCtx.fillStyle = rgbToCss(target.rgb);
+                    previewCtx.fillRect(bx, bz, 1, 1);
+                }
+            }
+        }
+
         function previewShape(tool, x0, z0, x1, z1, size, offsetStart, flipSide = false, color = selectedColor, tone = selectedTone) {
             for (const point of shapePointsForTool(tool, x0, z0, x1, z1, flipSide)) {
                 previewBrush(point.x, point.z, size, offsetStart, color, tone);
@@ -12025,7 +12655,7 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
             if (cursorSelectionFrame) cursorSelectionFrame.style.display = "none";
         }
 
-        function showCursorSelectionFrame(x, z) {
+        function showCursorSelectionFrame(x, z, size = 1) {
             if (!cursorSelectionFrame || x < 0 || x >= mapWidth || z < 0 || z >= mapHeight) {
                 hideCursorSelectionFrame();
                 return;
@@ -12035,12 +12665,23 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
             const wrapperRect = canvas.parentElement.getBoundingClientRect();
             const cellWidth = canvasRect.width / mapWidth;
             const cellHeight = canvasRect.height / mapHeight;
+            const frameSize = Math.max(1, Math.floor(size) || 1);
+            const offsetStart = Math.floor(frameSize / 2);
+            const offsetEnd = frameSize - offsetStart - 1;
+            const leftCell = Math.max(0, x - offsetStart);
+            const topCell = Math.max(0, z - offsetStart);
+            const rightCell = Math.min(mapWidth - 1, x + offsetEnd);
+            const bottomCell = Math.min(mapHeight - 1, z + offsetEnd);
 
             cursorSelectionFrame.style.display = "block";
-            cursorSelectionFrame.style.left = `${canvasRect.left - wrapperRect.left + x * cellWidth}px`;
-            cursorSelectionFrame.style.top = `${canvasRect.top - wrapperRect.top + z * cellHeight}px`;
-            cursorSelectionFrame.style.width = `${cellWidth}px`;
-            cursorSelectionFrame.style.height = `${cellHeight}px`;
+            cursorSelectionFrame.style.left = `${canvasRect.left - wrapperRect.left + leftCell * cellWidth}px`;
+            cursorSelectionFrame.style.top = `${canvasRect.top - wrapperRect.top + topCell * cellHeight}px`;
+            cursorSelectionFrame.style.width = `${Math.max(1, rightCell - leftCell + 1) * cellWidth}px`;
+            cursorSelectionFrame.style.height = `${Math.max(1, bottomCell - topCell + 1) * cellHeight}px`;
+        }
+
+        function cursorFrameSizeForTool(tool, brushSize) {
+            return tool === 'brush' || tool === 'dither-brush' || tool === 'eraser' || isShapeTool(tool) ? brushSize : 1;
         }
 
         function updateCursorPreview(x, z) {
@@ -12098,7 +12739,8 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
                 return;
             }
 
-            showCursorSelectionFrame(x, z);
+            const cursorFrameSize = cursorFrameSizeForTool(activeTool, size);
+            showCursorSelectionFrame(x, z, cursorFrameSize);
 
             if (replaceColorPreviewActive) {
                 renderReplaceColorPreview();
@@ -12114,6 +12756,11 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
 
             if (activeTool === 'picker') return;
             if (activeTool === 'eraser') return;
+
+            if (activeTool === 'dither-brush') {
+                previewDitherBrush(x, z, size, offsetStart);
+                return;
+            }
 
             if (isDrawing && activeTool === 'rect-select') {
                 previewSelectionRectangle(lineStartX, lineStartZ, x, z);
@@ -12454,6 +13101,11 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
                     if (applyEraser(x, z, true)) {
                         hasDrawnInCurrentStroke = true;
                     }
+                } else if (activeTool === 'dither-brush') {
+                    beginStrokeRenderThrottle();
+                    if (applyDitherBrush(x, z, true)) {
+                        hasDrawnInCurrentStroke = true;
+                    }
                 } else {
                     beginStrokeRenderThrottle();
                     if (applyBrush(x, z, true)) {
@@ -12524,7 +13176,9 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
                     if (x !== lastMouseX || z !== lastMouseZ) {
                         const changed = activeTool === 'eraser'
                             ? eraseLine(lastMouseX, lastMouseZ, x, z, true)
-                            : drawLine(lastMouseX, lastMouseZ, x, z, true);
+                            : activeTool === 'dither-brush'
+                                ? drawDitherLine(lastMouseX, lastMouseZ, x, z, true)
+                                : drawLine(lastMouseX, lastMouseZ, x, z, true);
                         if (changed) {
                             hasDrawnInCurrentStroke = true;
                         }

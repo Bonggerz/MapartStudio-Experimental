@@ -336,12 +336,18 @@
     function convertImageData(imageData, args) {
         const { coloursJSON, MapModes, WhereSupportBlocksModes, ColourMethods, DitherMethods } = args.data;
         const settings = { ...args, ColourMethods };
+        const progressCallback = typeof args.onProgress === "function" ? args.onProgress : null;
+        let lastProgressReport = -0.01;
         const cache = createContext(coloursJSON, args.selectedBlocks, args.disabledTones, MapModes, args.mode, args.staircasing);
         setupExactColourCache(coloursJSON, cache);
         const maps = initMaps(args.mapSizeX, args.mapSizeY, cache.colourSetsToUse, args.mode === MapModes.SCHEMATIC_NBT.uniqueId);
-        if (cache.colourSetsToUse.length === 0) return { pixels: imageData, maps, currentSelectedBlocks: args.selectedBlocks };
+        if (cache.colourSetsToUse.length === 0) {
+            if (progressCallback) progressCallback(1);
+            return { pixels: imageData, maps, currentSelectedBlocks: args.selectedBlocks };
+        }
 
         const data = imageData.data;
+        const progressHeight = Math.max(1, args.mapSizeY * 128);
         const dither = Object.values(DitherMethods).find((method) => method.uniqueId === args.dithering) || DitherMethods.None;
         const ditherMatrix = dither.uniqueId !== DitherMethods.None.uniqueId ? dither.ditherMatrix : null;
         const divisor = dither.ditherDivisor;
@@ -364,6 +370,13 @@
             const whichMapX = Math.floor(multimapX / 128);
             const whichMapY = Math.floor(multimapY / 128);
             const individualMapY = multimapY % 128;
+            if (progressCallback && multimapX === 0) {
+                const progress = Math.min(0.99, multimapY / progressHeight);
+                if (progress - lastProgressReport >= 0.01) {
+                    lastProgressReport = progress;
+                    progressCallback(progress);
+                }
+            }
             let closestPixel;
 
             if (args.mode === MapModes.MAPDAT.uniqueId && args.transparency && data[i + 3] < args.transparencyTolerance) {
@@ -450,6 +463,7 @@
             }
         }
 
+        if (progressCallback) progressCallback(1);
         return { pixels: imageData, maps, currentSelectedBlocks: args.selectedBlocks };
     }
 

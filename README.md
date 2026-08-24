@@ -10,6 +10,7 @@ Mapart Studio is a browser-based Minecraft mapart workspace. It wraps the existi
 - In-memory handoff from the converter to the NBT Editor.
 - Import one or more `.nbt` structure files.
 - Edit mapart with brush and line tools.
+- Paint exact converter dithering locally with a source-aware Dither Brush after using `Open in Editor`.
 - Supports carpet-only, full-block, and staircased mapart workflows.
 - Preserves hidden MapArtCraft noobline rows during export.
 - Adds support blocks for blocks that need them.
@@ -31,7 +32,7 @@ Editor workflow:
 1. Click the NBT file picker and import one or more `.nbt` files.
 2. Optionally import a palette profile.
 3. Select a color/block from the palette.
-4. Paint with the brush or line tool.
+4. Paint with the brush or line tool. Converter-opened maps can also use the Dither Brush with the same dithering methods as the converter.
 5. Export the edited result using one of the download buttons.
 
 ## Notes
@@ -61,6 +62,7 @@ Local MapArtCraft-derived/generated files include:
 
 - `mapartcraft_exact.js`
 - `mapartcraft_vendor_data.js`
+- `converter-preview-worker.js`
 - Converter-related portions of `nbt_mapart_editor.html`
 
 See `NOTICE.md` for attribution, provenance, and corresponding-source notes.
