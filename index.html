@@ -463,6 +463,37 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
             font-size: 11px;
         }
 
+        .dither-brush-range-value {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) 52px;
+            gap: 6px;
+            align-items: center;
+            min-width: 0;
+        }
+
+        .dither-brush-range-value input[type="range"] {
+            width: 100%;
+            min-width: 0;
+        }
+
+        .dither-brush-range-value input[type="number"] {
+            width: 100%;
+            min-width: 0;
+            height: 25px;
+            box-sizing: border-box;
+            background-color: #1e1e2e;
+            color: #cdd6f4;
+            border: 1px solid #6c7086;
+            padding: 3px 4px;
+            border-radius: 4px;
+            font-weight: bold;
+            font-size: 11px;
+        }
+
+        .dither-brush-propagation.is-disabled > * {
+            opacity: 0.55;
+        }
+
         .dither-brush-status {
             grid-column: 1 / -1;
             min-height: 14px;
@@ -3067,6 +3098,13 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
                                 <span class="tool-control-text">Dithering:</span>
                                 <select id="editorDither"></select>
                             </label>
+                            <label class="dither-brush-propagation" id="editorDitherPropagationLabel" for="editorDitherPropagation">
+                                <span class="tool-control-text">Propagation:</span>
+                                <div class="dither-brush-range-value">
+                                    <input type="range" id="editorDitherPropagation" min="0" max="200" value="100" aria-label="Dither brush propagation">
+                                    <input type="number" id="editorDitherPropagationValue" min="0" max="200" value="100" aria-label="Dither brush propagation value">
+                                </div>
+                            </label>
                             <div class="dither-brush-status" id="editorDitherStatus">Open converter output in the editor to enable this tool.</div>
                         </div>
                     </div>
@@ -4168,9 +4206,10 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
         let previewSnapshot = null;
         let editorDitherSource = null;
         let editorDitherPixels = null;
-        let editorDitherTargetMethod = null;
+        let editorDitherTargetSignature = null;
         let editorDitherWorker = null;
         let editorDitherWorkerJobId = 0;
+        let editorDitherPrepareTimer = null;
         
         // Panning coordinates
         let startPanX = 0;
@@ -4193,6 +4232,9 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
         const toolIconGrid = document.getElementById('toolIconGrid');
         const editorDitherControls = document.getElementById('editorDitherControls');
         const editorDither = document.getElementById('editorDither');
+        const editorDitherPropagationLabel = document.getElementById('editorDitherPropagationLabel');
+        const editorDitherPropagation = document.getElementById('editorDitherPropagation');
+        const editorDitherPropagationValue = document.getElementById('editorDitherPropagationValue');
         const editorDitherStatus = document.getElementById('editorDitherStatus');
         const canvasContainer = document.getElementById('canvasContainer');
         const toolGroup = document.querySelector('.tool-group');
@@ -5561,6 +5603,17 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
             return imageData;
         }
 
+        function controlNumberWithinRange(control, fallback = 100) {
+            const value = Number(control?.value);
+            const safeValue = Number.isFinite(value) ? value : fallback;
+            const min = Number(control?.min);
+            const max = Number(control?.max);
+            return Math.max(
+                Number.isFinite(min) ? min : -Infinity,
+                Math.min(Number.isFinite(max) ? max : Infinity, safeValue)
+            );
+        }
+
         function converterMapartConversionArgs() {
             return {
                 data: MAPARTCRAFT_VENDOR,
@@ -5575,9 +5628,9 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
                 transparencyTolerance: Number(converterTransparencyTolerance.value) || 0,
                 betterColour: converterMapartColourMethodId(),
                 dithering: converterMapartDitherId(),
-                propagationRed: Number(converterRedPropagation.value) || 100,
-                propagationGreen: Number(converterGreenPropagation.value) || 100,
-                propagationBlue: Number(converterBluePropagation.value) || 100
+                propagationRed: controlNumberWithinRange(converterRedPropagation, 100),
+                propagationGreen: controlNumberWithinRange(converterGreenPropagation, 100),
+                propagationBlue: controlNumberWithinRange(converterBluePropagation, 100)
             };
         }
 
@@ -6722,8 +6775,81 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
             }
         }
 
+        const EDITOR_ERROR_DIFFUSION_DITHERS = new Set([
+            "floyd_steinberg", "floyd_steinberg_false", "floyd_steinberg_20", "floyd_steinberg_24",
+            "atkinson", "atkinson_6", "atkinson_10", "atkinson_12", "sierra_lite", "fan",
+            "shiau_fan", "shiau_fan_2", "jarvis", "stucki", "burkes", "sierra", "sierra_two_row"
+        ]);
+
+        function editorDitherUsesPropagation(method = editorDither.value) {
+            return EDITOR_ERROR_DIFFUSION_DITHERS.has(method);
+        }
+
+        function editorDitherPropagationStrength() {
+            return controlNumberWithinRange(editorDitherPropagation, 100);
+        }
+
+        function applyEditorDitherPropagation(conversionArgs, method) {
+            if (!editorDitherUsesPropagation(method)) return conversionArgs;
+            const multiplier = editorDitherPropagationStrength() / 100;
+            for (const key of ["propagationRed", "propagationGreen", "propagationBlue"]) {
+                const sourceValue = Number(conversionArgs[key]);
+                const inherited = Number.isFinite(sourceValue) ? sourceValue : 100;
+                conversionArgs[key] = Math.max(0, Math.min(200, inherited * multiplier));
+            }
+            return conversionArgs;
+        }
+
+        function editorDitherSignature(method = editorDither.value) {
+            if (!editorDitherSourceAvailable()) return null;
+            const conversionArgs = applyEditorDitherPropagation(
+                cloneDitherConversionArgs(editorDitherSource.conversionArgs),
+                method
+            );
+            if (!editorDitherUsesPropagation(method)) return method;
+            return [
+                method,
+                conversionArgs.propagationRed,
+                conversionArgs.propagationGreen,
+                conversionArgs.propagationBlue
+            ].join("|");
+        }
+
+        function editorDitherTargetIsReady() {
+            return !!(
+                editorDitherPixels &&
+                editorDitherTargetSignature === editorDitherSignature() &&
+                editorDitherPixels.length === mapWidth * mapHeight * 4
+            );
+        }
+
+        function cancelEditorDitherPreparation() {
+            if (editorDitherPrepareTimer !== null) {
+                clearTimeout(editorDitherPrepareTimer);
+                editorDitherPrepareTimer = null;
+            }
+            terminateEditorDitherWorker();
+            editorDitherWorkerJobId++;
+        }
+
+        function queueEditorDitherTarget(delay = 160) {
+            cancelEditorDitherPreparation();
+            editorDitherPixels = null;
+            editorDitherTargetSignature = null;
+            updateEditorDitherControls();
+            if (!editorDitherSourceAvailable()) return;
+            setEditorDitherStatus(delay > 0 ? "Waiting to update dither target..." : "Preparing dither target...");
+            editorDitherPrepareTimer = setTimeout(() => {
+                editorDitherPrepareTimer = null;
+                prepareEditorDitherTarget();
+            }, delay);
+            updateCursorPreview(lastMouseX, lastMouseZ);
+        }
+
         function updateEditorDitherControls() {
             const available = editorDitherSourceAvailable();
+            const usesPropagation = editorDitherUsesPropagation();
+            const propagationEnabled = available && usesPropagation;
             const option = toolSelect.querySelector('option[value="dither-brush"]');
             const button = toolIconGrid.querySelector('[data-tool="dither-brush"]');
             if (option) option.disabled = !available;
@@ -6734,19 +6860,26 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
                     : "Dither Brush requires a converter image source";
             }
             if (editorDitherControls) editorDitherControls.hidden = activeTool !== "dither-brush";
+            if (editorDitherPropagation) editorDitherPropagation.disabled = !propagationEnabled;
+            if (editorDitherPropagationValue) editorDitherPropagationValue.disabled = !propagationEnabled;
+            if (editorDitherPropagationLabel) {
+                editorDitherPropagationLabel.classList.toggle("is-disabled", !propagationEnabled);
+                editorDitherPropagationLabel.title = usesPropagation
+                    ? "Scales the source profile's RGB error propagation together. 100% preserves the converter settings."
+                    : "This dithering method does not use error propagation.";
+            }
             if (!available) {
                 setEditorDitherStatus("Open converter output in the editor to enable this tool.");
-            } else if (editorDitherPixels && editorDitherTargetMethod === editorDither.value) {
+            } else if (editorDitherTargetIsReady()) {
                 setEditorDitherStatus("Exact dither target ready.");
             }
         }
 
         function clearEditorDitherSource(options = {}) {
-            terminateEditorDitherWorker();
-            editorDitherWorkerJobId++;
+            cancelEditorDitherPreparation();
             editorDitherSource = null;
             editorDitherPixels = null;
-            editorDitherTargetMethod = null;
+            editorDitherTargetSignature = null;
             if (!options.keepTool && activeTool === "dither-brush") setActiveTool("brush");
             updateEditorDitherControls();
         }
@@ -6774,20 +6907,20 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
             if (activeTool === "dither-brush") prepareEditorDitherTarget();
         }
 
-        function applyEditorDitherWorkerResult(method, pixelsData) {
-            if (!editorDitherSourceAvailable() || method !== editorDither.value) return;
+        function applyEditorDitherWorkerResult(signature, pixelsData) {
+            if (!editorDitherSourceAvailable() || signature !== editorDitherSignature()) return;
             if (!pixelsData || pixelsData.length !== mapWidth * mapHeight * 4) {
                 setEditorDitherStatus("Dither calculation returned invalid pixel data.");
                 return;
             }
             editorDitherPixels = pixelsData;
-            editorDitherTargetMethod = method;
+            editorDitherTargetSignature = signature;
             setEditorDitherStatus("Exact dither target ready.");
             updateEditorDitherControls();
             updateCursorPreview(lastMouseX, lastMouseZ);
         }
 
-        function runEditorDitherTargetSynchronously(jobId, method, sourceData, conversionArgs) {
+        function runEditorDitherTargetSynchronously(jobId, signature, sourceData, conversionArgs) {
             requestAnimationFrame(() => {
                 if (jobId !== editorDitherWorkerJobId || !editorDitherSourceAvailable()) return;
                 try {
@@ -6797,7 +6930,7 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
                         { ...conversionArgs, data: MAPARTCRAFT_VENDOR }
                     );
                     if (jobId !== editorDitherWorkerJobId) return;
-                    applyEditorDitherWorkerResult(method, converted.pixels.data);
+                    applyEditorDitherWorkerResult(signature, converted.pixels.data);
                 } catch (error) {
                     console.error(error);
                     setEditorDitherStatus("Dither calculation failed: " + error.message);
@@ -6806,14 +6939,19 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
         }
 
         function prepareEditorDitherTarget() {
+            if (editorDitherPrepareTimer !== null) {
+                clearTimeout(editorDitherPrepareTimer);
+                editorDitherPrepareTimer = null;
+            }
             if (!editorDitherSourceAvailable()) {
                 updateEditorDitherControls();
                 return false;
             }
             const method = editorDither.value || "none";
+            const signature = editorDitherSignature(method);
             if (
                 editorDitherPixels &&
-                editorDitherTargetMethod === method &&
+                editorDitherTargetSignature === signature &&
                 editorDitherPixels.length === mapWidth * mapHeight * 4
             ) {
                 setEditorDitherStatus("Exact dither target ready.");
@@ -6823,15 +6961,16 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
             terminateEditorDitherWorker();
             const jobId = ++editorDitherWorkerJobId;
             editorDitherPixels = null;
-            editorDitherTargetMethod = null;
+            editorDitherTargetSignature = null;
             setEditorDitherStatus("Calculating exact dither target... 0%");
 
             const sourceData = new Uint8ClampedArray(editorDitherSource.data);
             const conversionArgs = cloneDitherConversionArgs(editorDitherSource.conversionArgs);
             conversionArgs.dithering = mapartDitherIdForValue(method);
+            applyEditorDitherPropagation(conversionArgs, method);
 
             if (typeof Worker === "undefined") {
-                runEditorDitherTargetSynchronously(jobId, method, sourceData, conversionArgs);
+                runEditorDitherTargetSynchronously(jobId, signature, sourceData, conversionArgs);
                 return false;
             }
 
@@ -6848,7 +6987,7 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
                 if (message.type === "result") {
                     editorDitherWorker = null;
                     worker.terminate();
-                    applyEditorDitherWorkerResult(method, new Uint8ClampedArray(message.pixelsBuffer));
+                    applyEditorDitherWorkerResult(signature, new Uint8ClampedArray(message.pixelsBuffer));
                     return;
                 }
                 if (message.type === "error") {
@@ -7120,13 +7259,10 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
         editorDither.innerHTML = converterDither.innerHTML;
         editorDither.value = "floyd_steinberg";
         editorDither.addEventListener("change", () => {
-            terminateEditorDitherWorker();
-            editorDitherWorkerJobId++;
-            editorDitherPixels = null;
-            editorDitherTargetMethod = null;
-            prepareEditorDitherTarget();
-            updateCursorPreview(lastMouseX, lastMouseZ);
+            updateEditorDitherControls();
+            queueEditorDitherTarget(0);
         });
+        syncConverterRange(editorDitherPropagation, editorDitherPropagationValue, () => queueEditorDitherTarget());
         updateEditorDitherControls();
 
         function setActiveTool(toolValue, rememberPrevious = true) {
@@ -10126,7 +10262,7 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
         function editorDitherTargetAt(x, z) {
             if (
                 !editorDitherPixels ||
-                editorDitherTargetMethod !== editorDither.value ||
+                !editorDitherTargetIsReady() ||
                 x < 0 || x >= mapWidth || z < 0 || z >= mapHeight
             ) return null;
             const offset = (z * mapWidth + x) * 4;
@@ -10156,7 +10292,7 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
                 setEditorDitherStatus("Open converter output in the editor to enable this tool.");
                 return false;
             }
-            if (!editorDitherPixels || editorDitherTargetMethod !== editorDither.value) {
+            if (!editorDitherTargetIsReady()) {
                 prepareEditorDitherTarget();
                 return false;
             }
