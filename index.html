@@ -2736,10 +2736,17 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
                                     </div>
                                 </div>
                                 <div class="converter-field" data-manual-crop-field>
-                                    <span>Crop offset</span>
-                                    <div class="converter-inline">
-                                        <input type="number" id="converterCropX" min="-100" max="100" value="0" aria-label="Crop X position">
-                                        <input type="number" id="converterCropY" min="-100" max="100" value="0" aria-label="Crop Y position">
+                                    <label for="converterCropX">Crop X offset</label>
+                                    <div class="converter-range-value">
+                                        <input type="range" id="converterCropX" min="-100" max="100" value="0" aria-label="Crop X offset slider">
+                                        <input type="number" id="converterCropXValue" min="-100" max="100" value="0" aria-label="Crop X offset value">
+                                    </div>
+                                </div>
+                                <div class="converter-field" data-manual-crop-field>
+                                    <label for="converterCropY">Crop Y offset</label>
+                                    <div class="converter-range-value">
+                                        <input type="range" id="converterCropY" min="-100" max="100" value="0" aria-label="Crop Y offset slider">
+                                        <input type="number" id="converterCropYValue" min="-100" max="100" value="0" aria-label="Crop Y offset value">
                                     </div>
                                 </div>
                                 <div class="converter-field">
@@ -4263,7 +4270,9 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
         const converterCropZoom = document.getElementById("converterCropZoom");
         const converterCropZoomValue = document.getElementById("converterCropZoomValue");
         const converterCropX = document.getElementById("converterCropX");
+        const converterCropXValue = document.getElementById("converterCropXValue");
         const converterCropY = document.getElementById("converterCropY");
+        const converterCropYValue = document.getElementById("converterCropYValue");
         const converterShowGrid = document.getElementById("converterShowGrid");
         const converterStaircasing = document.getElementById("converterStaircasing");
         const converterSupportMode = document.getElementById("converterSupportMode");
@@ -4431,7 +4440,8 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
             const syncFromNumber = () => {
                 const min = Number(range.min);
                 const max = Number(range.max);
-                const next = Math.max(min, Math.min(max, Number(number.value) || Number(range.value)));
+                const entered = Number(number.value);
+                const next = Math.max(min, Math.min(max, Number.isFinite(entered) ? entered : Number(range.value)));
                 range.value = String(next);
                 number.value = String(next);
                 callback();
@@ -4505,7 +4515,9 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
             converterCropZoom.value = "100";
             converterCropZoomValue.value = "100";
             converterCropX.value = "0";
+            converterCropXValue.value = "0";
             converterCropY.value = "0";
+            converterCropYValue.value = "0";
         }
 
         function updateConverterExtraStairControls() {
@@ -6934,6 +6946,8 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
                 converterSupportBlocks.appendChild(option);
             });
             syncConverterRange(converterCropZoom, converterCropZoomValue, queueConverterPreview);
+            syncConverterRange(converterCropX, converterCropXValue, queueConverterPreview);
+            syncConverterRange(converterCropY, converterCropYValue, queueConverterPreview);
             syncConverterRange(converterRedPropagation, converterRedPropagationValue, queueConverterPreview);
             syncConverterRange(converterGreenPropagation, converterGreenPropagationValue, queueConverterPreview);
             syncConverterRange(converterBluePropagation, converterBluePropagationValue, queueConverterPreview);
@@ -6979,7 +6993,7 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
             converterShowGrid, converterStaircasing, converterSupportMode, converterSupportBlock,
             converterTransparency, converterTransparencyTolerance, converterUseMapId, converterStartId,
             converterColorMethod, converterDither, converterPreprocess, converterBackgroundMode,
-            converterBackgroundColor, converterCropX, converterCropY
+            converterBackgroundColor
         ].forEach(control => {
             control.addEventListener("input", () => {
                 if (control === converterMode) updateConverterModeControls();
