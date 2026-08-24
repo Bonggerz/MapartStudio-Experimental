@@ -11780,9 +11780,11 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
         // --- PREVIEW CURSOR LAYER ---
         function previewFillStyleAt(x, z, color = selectedColor, tone = selectedTone) {
             const cell = cellAtGlobal(x, z);
-            const rgb = manualShadingActive()
-                ? rgbForMapTone(color, tone)
-                : (cell ? rgbForCellColor(cell, color) : rgbForMapTone(color, "normal"));
+            const rgb = paletteMode === "fullblock"
+                ? rgbForMapTone(color, "normal")
+                : manualShadingActive()
+                    ? rgbForMapTone(color, tone)
+                    : (cell ? rgbForCellColor(cell, color) : rgbForMapTone(color, "normal"));
             return rgbToCss(rgb);
         }
 
