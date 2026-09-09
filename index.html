@@ -1586,13 +1586,24 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
             display: block;
         }
 
-        #mapCanvas { cursor: crosshair; }
+        #mapDisplayCanvas {
+            image-rendering: auto;
+        }
+
+        #mapCanvas {
+            position: absolute;
+            inset: 0;
+            opacity: 0;
+            cursor: crosshair;
+            z-index: 1;
+        }
 
         #previewCanvas {
             position: absolute;
             top: 0;
             left: 0;
             pointer-events: none; 
+            z-index: 2;
         }
 
         .shape-selection-box {
@@ -2411,8 +2422,27 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
 
         #converterCanvas {
             display: block;
-            image-rendering: pixelated;
+            image-rendering: auto;
             box-shadow: 0 0 0 1px #6c7086;
+        }
+
+        #converterGridCanvas {
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            image-rendering: auto;
+        }
+
+        .converter-zoom-step {
+            min-width: 32px;
+            padding: 4px 8px;
+        }
+
+        #converterZoomValue {
+            min-width: 112px;
+            color: #bac2de;
+            font-size: 0.82rem;
+            text-align: right;
         }
 
         .converter-empty-state {
@@ -3225,14 +3255,18 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
                     <section class="converter-panel converter-preview-panel">
                         <div class="converter-preview-toolbar">
                             <label>Preview zoom
+                                <button class="converter-zoom-step" id="converterZoomOut" type="button" aria-label="Zoom out">−</button>
                                 <input type="range" id="converterZoom" min="0.05" max="24" step="0.05" value="4">
+                                <button class="converter-zoom-step" id="converterZoomIn" type="button" aria-label="Zoom in">+</button>
                             </label>
+                            <output id="converterZoomValue" for="converterZoom">4× · Pixel-perfect</output>
                             <button id="converterFitPreview" type="button">Fit</button>
                         </div>
                         <div class="converter-canvas-container" id="converterCanvasContainer">
                             <div class="converter-canvas-stage">
                                 <div class="converter-canvas-wrap">
                                     <canvas id="converterCanvas" width="128" height="128"></canvas>
+                                    <canvas id="converterGridCanvas" width="128" height="128"></canvas>
                                     <div class="converter-empty-state" id="converterEmptyState">No image loaded</div>
                                 </div>
                             </div>
@@ -3394,6 +3428,7 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
         <div class="canvas-column">
             <div class="canvas-container" id="canvasContainer">
                 <div class="canvas-wrapper">
+                    <canvas id="mapDisplayCanvas"></canvas>
                     <canvas id="mapCanvas"></canvas>
                     <canvas id="previewCanvas"></canvas>
                     <div class="shape-selection-box" id="shapeSelectionBox" aria-hidden="true">
@@ -4578,6 +4613,7 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
         
         const canvas = document.getElementById('mapCanvas');
         const ctx = canvas.getContext('2d');
+        const mapDisplayCanvas = document.getElementById('mapDisplayCanvas');
         const previewCanvas = document.getElementById('previewCanvas');
         const previewCtx = previewCanvas.getContext('2d');
         const cursorSelectionFrame = document.getElementById('cursorSelectionFrame');
@@ -4707,10 +4743,16 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
         const converterShowExtraStairs = document.getElementById("converterShowExtraStairs");
         const converterStatus = document.getElementById("converterStatus");
         const converterCanvas = document.getElementById("converterCanvas");
-        const converterCtx = converterCanvas.getContext("2d");
+        const converterGridCanvas = document.getElementById("converterGridCanvas");
+        const converterGridCtx = converterGridCanvas.getContext("2d");
+        const converterSourceCanvas = document.createElement("canvas");
+        const converterSourceCtx = converterSourceCanvas.getContext("2d");
         const converterCanvasContainer = document.getElementById("converterCanvasContainer");
         const converterEmptyState = document.getElementById("converterEmptyState");
         const converterZoom = document.getElementById("converterZoom");
+        const converterZoomOut = document.getElementById("converterZoomOut");
+        const converterZoomIn = document.getElementById("converterZoomIn");
+        const converterZoomValue = document.getElementById("converterZoomValue");
         const converterFitPreview = document.getElementById("converterFitPreview");
         const converterImageMeta = document.getElementById("converterImageMeta");
         const converterOutputMeta = document.getElementById("converterOutputMeta");
@@ -4777,9 +4819,111 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
         let converterPanStartY = 0;
         let converterPanStartScrollLeft = 0;
         let converterPanStartScrollTop = 0;
+        const converterMipChain = [converterSourceCanvas];
+        const editorMipChain = [canvas];
+        let queuedEditorDisplayFrame = null;
         let nbtMaterialRecords = [];
         let nbtMaterialNextRecordId = 1;
         let nbtMaterialsProcessing = false;
+
+        const PREVIEW_ZOOM_STEPS = [0.05, 0.1, 0.125, 0.25, 0.5, 0.75, 1, 2, 3, 4, 6, 8, 12, 16, 24, 30];
+
+        function invalidatePreviewMipChain(chain, sourceCanvas) {
+            chain.length = 1;
+            chain[0] = sourceCanvas;
+        }
+
+        function previewMipCanvas(sourceCanvas, chain, requestedLevel) {
+            invalidatePreviewMipChainIfSourceChanged(chain, sourceCanvas);
+            const maxLevel = Math.max(0, Math.floor(Math.log2(Math.max(1, Math.max(sourceCanvas.width, sourceCanvas.height)))));
+            const targetLevel = Math.max(0, Math.min(maxLevel, requestedLevel));
+            while (chain.length <= targetLevel) {
+                const previous = chain[chain.length - 1];
+                const level = document.createElement("canvas");
+                level.width = Math.max(1, Math.floor(previous.width / 2));
+                level.height = Math.max(1, Math.floor(previous.height / 2));
+                const levelCtx = level.getContext("2d");
+                levelCtx.imageSmoothingEnabled = true;
+                levelCtx.imageSmoothingQuality = "high";
+                levelCtx.drawImage(previous, 0, 0, previous.width, previous.height, 0, 0, level.width, level.height);
+                chain.push(level);
+            }
+            return chain[targetLevel];
+        }
+
+        function invalidatePreviewMipChainIfSourceChanged(chain, sourceCanvas) {
+            if (chain[0] !== sourceCanvas) invalidatePreviewMipChain(chain, sourceCanvas);
+        }
+
+        function renderPreviewSurface(displayCanvas, sourceCanvas, mipChain, cssWidth, cssHeight) {
+            const safeCssWidth = Math.max(1, cssWidth);
+            const safeCssHeight = Math.max(1, cssHeight);
+            const dpr = Math.max(1, Number(window.devicePixelRatio) || 1);
+            const cssScaleX = safeCssWidth / Math.max(1, sourceCanvas.width);
+            const cssScaleY = safeCssHeight / Math.max(1, sourceCanvas.height);
+            const nearestCssInteger = Math.max(1, Math.round(Math.min(cssScaleX, cssScaleY)));
+            const pixelPerfect = cssScaleX >= 1
+                && Math.abs(cssScaleX - nearestCssInteger) < 0.001
+                && Math.abs(cssScaleY - nearestCssInteger) < 0.001;
+            const desiredRenderWidth = Math.max(1, Math.round(safeCssWidth * dpr));
+            const desiredRenderHeight = Math.max(1, Math.round(safeCssHeight * dpr));
+            const maxRenderDimension = 8192;
+            const maxRenderPixels = 16777216;
+            const renderLimit = pixelPerfect
+                ? 1
+                : Math.min(
+                    1,
+                    maxRenderDimension / desiredRenderWidth,
+                    maxRenderDimension / desiredRenderHeight,
+                    Math.sqrt(maxRenderPixels / Math.max(1, desiredRenderWidth * desiredRenderHeight))
+                );
+            const renderWidth = pixelPerfect
+                ? Math.max(1, sourceCanvas.width)
+                : Math.max(1, Math.round(desiredRenderWidth * renderLimit));
+            const renderHeight = pixelPerfect
+                ? Math.max(1, sourceCanvas.height)
+                : Math.max(1, Math.round(desiredRenderHeight * renderLimit));
+            const scaleX = renderWidth / Math.max(1, sourceCanvas.width);
+            const scaleY = renderHeight / Math.max(1, sourceCanvas.height);
+            const effectiveScale = Math.min(scaleX, scaleY);
+            const mipLevel = effectiveScale < 1
+                ? Math.max(0, Math.floor(Math.log2(1 / Math.max(effectiveScale, 0.000001))))
+                : 0;
+            const source = previewMipCanvas(sourceCanvas, mipChain, mipLevel);
+
+            displayCanvas.style.width = `${safeCssWidth}px`;
+            displayCanvas.style.height = `${safeCssHeight}px`;
+            displayCanvas.style.imageRendering = pixelPerfect ? "pixelated" : "auto";
+            if (displayCanvas.width !== renderWidth) displayCanvas.width = renderWidth;
+            if (displayCanvas.height !== renderHeight) displayCanvas.height = renderHeight;
+
+            const displayCtx = displayCanvas.getContext("2d");
+            displayCtx.clearRect(0, 0, renderWidth, renderHeight);
+            displayCtx.imageSmoothingEnabled = !pixelPerfect;
+            if (!pixelPerfect) displayCtx.imageSmoothingQuality = "high";
+            displayCtx.drawImage(source, 0, 0, source.width, source.height, 0, 0, renderWidth, renderHeight);
+
+            return {
+                dpr,
+                renderWidth,
+                renderHeight,
+                pixelPerfect,
+                mipLevel,
+                effectiveScale,
+                renderLimited: renderLimit < 0.999999
+            };
+        }
+
+        function nextPreviewZoomStep(scale, direction, minimum, maximum) {
+            const candidates = PREVIEW_ZOOM_STEPS.filter(value => value >= minimum - 0.000001 && value <= maximum + 0.000001);
+            if (direction > 0) {
+                return candidates.find(value => value > scale + 0.000001) ?? maximum;
+            }
+            for (let index = candidates.length - 1; index >= 0; index--) {
+                if (candidates[index] < scale - 0.000001) return candidates[index];
+            }
+            return minimum;
+        }
 
         function switchStudioWorkspace(workspace) {
             const target = ["home", "converter", "editor", "materials", "reverse"].includes(workspace) ? workspace : "home";
@@ -6151,10 +6295,10 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
                 : [];
             converterConvertedPixelCount = totalPixels;
             converterMapColorBytes = result.mapColorBytes || new Uint8Array(result.mapColorBytesBuffer);
-            converterCanvas.width = width;
-            converterCanvas.height = height;
-            converterCtx.putImageData(new ImageData(pixelsData, width, height), 0, 0);
-            drawConverterGrid(width, height);
+            converterSourceCanvas.width = width;
+            converterSourceCanvas.height = height;
+            converterSourceCtx.putImageData(new ImageData(pixelsData, width, height), 0, 0);
+            invalidatePreviewMipChain(converterMipChain, converterSourceCanvas);
             converterEmptyState.textContent = "No image loaded";
             converterEmptyState.style.display = "none";
             converterImageMeta.textContent = `${converterImageBaseName} - ${converterImageNaturalWidth} x ${converterImageNaturalHeight}`;
@@ -6250,34 +6394,70 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
             }, [sourceImage.data.buffer]);
         }
 
-        function drawConverterGrid(width, height) {
-            if (!converterShowGrid.checked) return;
-            converterCtx.save();
-            converterCtx.strokeStyle = "rgba(255, 255, 255, 0.55)";
-            converterCtx.lineWidth = 1;
+        function drawConverterGrid(width, height, renderInfo) {
+            const cssWidth = Math.max(1, Math.round(width * converterZoomScale));
+            const cssHeight = Math.max(1, Math.round(height * converterZoomScale));
+            converterGridCanvas.style.width = `${cssWidth}px`;
+            converterGridCanvas.style.height = `${cssHeight}px`;
+            if (!converterShowGrid.checked) {
+                if (converterGridCanvas.width !== 1) converterGridCanvas.width = 1;
+                if (converterGridCanvas.height !== 1) converterGridCanvas.height = 1;
+                converterGridCtx.clearRect(0, 0, 1, 1);
+                return;
+            }
+            const desiredWidth = Math.max(1, Math.round(cssWidth * renderInfo.dpr));
+            const desiredHeight = Math.max(1, Math.round(cssHeight * renderInfo.dpr));
+            const gridLimit = Math.min(
+                1,
+                8192 / desiredWidth,
+                8192 / desiredHeight,
+                Math.sqrt(16777216 / Math.max(1, desiredWidth * desiredHeight))
+            );
+            const renderWidth = Math.max(1, Math.round(desiredWidth * gridLimit));
+            const renderHeight = Math.max(1, Math.round(desiredHeight * gridLimit));
+            if (converterGridCanvas.width !== renderWidth) converterGridCanvas.width = renderWidth;
+            if (converterGridCanvas.height !== renderHeight) converterGridCanvas.height = renderHeight;
+            converterGridCtx.clearRect(0, 0, converterGridCanvas.width, converterGridCanvas.height);
+            const scaleX = converterGridCanvas.width / width;
+            const scaleY = converterGridCanvas.height / height;
+            converterGridCtx.save();
+            converterGridCtx.strokeStyle = "rgba(255, 255, 255, 0.55)";
+            const gridPixelRatio = converterGridCanvas.width / Math.max(1, width * converterZoomScale);
+            converterGridCtx.lineWidth = Math.max(1, gridPixelRatio);
             for (let x = CONVERTER_MAP_SIZE; x < width; x += CONVERTER_MAP_SIZE) {
-                converterCtx.beginPath();
-                converterCtx.moveTo(x + 0.5, 0);
-                converterCtx.lineTo(x + 0.5, height);
-                converterCtx.stroke();
+                const screenX = Math.round(x * scaleX) + 0.5;
+                converterGridCtx.beginPath();
+                converterGridCtx.moveTo(screenX, 0);
+                converterGridCtx.lineTo(screenX, converterGridCanvas.height);
+                converterGridCtx.stroke();
             }
             for (let y = CONVERTER_MAP_SIZE; y < height; y += CONVERTER_MAP_SIZE) {
-                converterCtx.beginPath();
-                converterCtx.moveTo(0, y + 0.5);
-                converterCtx.lineTo(width, y + 0.5);
-                converterCtx.stroke();
+                const screenY = Math.round(y * scaleY) + 0.5;
+                converterGridCtx.beginPath();
+                converterGridCtx.moveTo(0, screenY);
+                converterGridCtx.lineTo(converterGridCanvas.width, screenY);
+                converterGridCtx.stroke();
             }
-            converterCtx.restore();
+            converterGridCtx.restore();
         }
 
         function applyConverterZoom() {
-            const width = converterCanvas.width || converterOutputWidth();
-            const height = converterCanvas.height || converterOutputHeight();
+            const width = converterSourceCanvas.width || converterOutputWidth();
+            const height = converterSourceCanvas.height || converterOutputHeight();
             converterZoomScale = clampConverterZoomScale(converterZoomScale);
             converterZoom.value = String(converterZoomScale);
             const scale = converterZoomScale;
-            converterCanvas.style.width = `${Math.max(1, Math.floor(width * scale))}px`;
-            converterCanvas.style.height = `${Math.max(1, Math.floor(height * scale))}px`;
+            const cssWidth = Math.max(1, Math.round(width * scale));
+            const cssHeight = Math.max(1, Math.round(height * scale));
+            const renderInfo = renderPreviewSurface(converterCanvas, converterSourceCanvas, converterMipChain, cssWidth, cssHeight);
+            drawConverterGrid(width, height, renderInfo);
+            const zoomText = Number.isInteger(scale) ? String(scale) : scale.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
+            const samplingText = renderInfo.pixelPerfect
+                ? "Pixel-perfect"
+                : renderInfo.mipLevel > 0
+                    ? `Mip ${renderInfo.mipLevel} · Smooth`
+                    : "Smooth";
+            converterZoomValue.textContent = `${zoomText}× · ${samplingText}`;
         }
 
         function clampConverterZoomScale(scale) {
@@ -6293,8 +6473,8 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
         }
 
         function setConverterZoomAtPoint(nextScale, clientX, clientY) {
-            const width = converterCanvas.width || converterOutputWidth();
-            const height = converterCanvas.height || converterOutputHeight();
+            const width = converterSourceCanvas.width || converterOutputWidth();
+            const height = converterSourceCanvas.height || converterOutputHeight();
             if (width <= 0 || height <= 0) {
                 setConverterZoomScale(nextScale);
                 return;
@@ -6328,8 +6508,8 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
         }
 
         function fitConverterPreview() {
-            const width = converterCanvas.width || converterOutputWidth();
-            const height = converterCanvas.height || converterOutputHeight();
+            const width = converterSourceCanvas.width || converterOutputWidth();
+            const height = converterSourceCanvas.height || converterOutputHeight();
             const rect = converterCanvasContainer.getBoundingClientRect();
             const availableWidth = Math.max(1, rect.width - 54);
             const availableHeight = Math.max(1, rect.height - 54);
@@ -6434,10 +6614,11 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
                 clearConverterConvertedOutput();
                 converterEmptyState.textContent = "No image loaded";
                 converterEmptyState.style.display = "";
-                converterCanvas.width = converterOutputWidth();
-                converterCanvas.height = converterOutputHeight();
-                converterCtx.clearRect(0, 0, converterCanvas.width, converterCanvas.height);
-                converterOutputMeta.textContent = `${converterCanvas.width} x ${converterCanvas.height} pixels`;
+                converterSourceCanvas.width = converterOutputWidth();
+                converterSourceCanvas.height = converterOutputHeight();
+                converterSourceCtx.clearRect(0, 0, converterSourceCanvas.width, converterSourceCanvas.height);
+                invalidatePreviewMipChain(converterMipChain, converterSourceCanvas);
+                converterOutputMeta.textContent = `${converterSourceCanvas.width} x ${converterSourceCanvas.height} pixels`;
                 applyConverterZoom();
                 renderConverterMaterials();
                 restoreConverterMaterialViewport();
@@ -6448,9 +6629,10 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
             const width = converterOutputWidth();
             const height = converterOutputHeight();
             clearConverterConvertedOutput();
-            converterCanvas.width = width;
-            converterCanvas.height = height;
-            converterCtx.clearRect(0, 0, width, height);
+            converterSourceCanvas.width = width;
+            converterSourceCanvas.height = height;
+            converterSourceCtx.clearRect(0, 0, width, height);
+            invalidatePreviewMipChain(converterMipChain, converterSourceCanvas);
             converterEmptyState.textContent = "Converting preview...";
             converterEmptyState.style.display = "";
             converterOutputMeta.textContent = `${width} x ${height} pixels (${width / 128} x ${height / 128} maps)`;
@@ -7497,7 +7679,7 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
 
         [
             converterMode, converterVersion, converterMapsWide, converterMapsHigh, converterCropMode,
-            converterShowGrid, converterStaircasing, converterSupportMode, converterSupportBlock,
+            converterStaircasing, converterSupportMode, converterSupportBlock,
             converterTransparency, converterTransparencyTolerance, converterUseMapId, converterStartId,
             converterColorMethod, converterDither, converterPreprocess, converterBackgroundMode,
             converterBackgroundColor
@@ -7535,6 +7717,13 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
         converterZoom.addEventListener("input", () => {
             setConverterZoomScale(Number(converterZoom.value) || converterZoomScale);
         });
+        converterZoomOut.addEventListener("click", () => {
+            setConverterZoomScale(nextPreviewZoomStep(converterZoomScale, -1, Number(converterZoom.min), Number(converterZoom.max)));
+        });
+        converterZoomIn.addEventListener("click", () => {
+            setConverterZoomScale(nextPreviewZoomStep(converterZoomScale, 1, Number(converterZoom.min), Number(converterZoom.max)));
+        });
+        converterShowGrid.addEventListener("change", applyConverterZoom);
         converterFitPreview.addEventListener("click", fitConverterPreview);
         converterPalettePreset.addEventListener("change", () => {
             applyConverterMapartPreset(converterPalettePresetName());
@@ -7618,7 +7807,7 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
             event.preventDefault();
             const current = converterZoomScale || 4;
             const direction = event.deltaY > 0 ? -1 : 1;
-            const next = current + direction * 0.15 * current;
+            const next = nextPreviewZoomStep(current, direction, Number(converterZoom.min), Number(converterZoom.max));
             setConverterZoomAtPoint(next, event.clientX, event.clientY);
         }, { passive: false });
 
@@ -10114,6 +10303,7 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
 
             canvas.width = mapWidth;
             canvas.height = mapHeight;
+            invalidatePreviewMipChain(editorMipChain, canvas);
             previewCanvas.width = mapWidth;
             previewCanvas.height = mapHeight;
             setEditorDitherSource(options.ditherSource || null);
@@ -10800,6 +10990,7 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
                     ctx.fillStyle = rgbToCss(rgbForCellColor(cell, selectedColor));
                     ctx.fillRect(cell.globalX, cell.globalZ, 1, 1);
                 }
+                queueEditorDisplayRender();
                 refreshMaterialListIfOpen();
             } else {
                 renderFullCanvas();
@@ -10894,6 +11085,7 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
                 }
             }
             ctx.putImageData(imageData, 0, 0);
+            queueEditorDisplayRender();
             refreshMaterialListIfOpen();
         }
 
@@ -14263,11 +14455,32 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
             updateCursorPreview(x, z);
         });
 
+        function renderEditorDisplay() {
+            if (mapWidth === 0 || mapHeight === 0) return null;
+            const cssWidth = Math.max(1, Math.round(mapWidth * currentScale));
+            const cssHeight = Math.max(1, Math.round(mapHeight * currentScale));
+            return renderPreviewSurface(mapDisplayCanvas, canvas, editorMipChain, cssWidth, cssHeight);
+        }
+
+        function queueEditorDisplayRender() {
+            invalidatePreviewMipChain(editorMipChain, canvas);
+            if (queuedEditorDisplayFrame !== null) return;
+            queuedEditorDisplayFrame = requestAnimationFrame(() => {
+                queuedEditorDisplayFrame = null;
+                renderEditorDisplay();
+            });
+        }
+
         function applyZoom() {
-            const w = Math.floor(mapWidth * currentScale) + 'px';
-            const h = Math.floor(mapHeight * currentScale) + 'px';
-            canvas.style.width = w; canvas.style.height = h;
-            previewCanvas.style.width = w; previewCanvas.style.height = h;
+            const cssWidth = Math.max(1, Math.round(mapWidth * currentScale));
+            const cssHeight = Math.max(1, Math.round(mapHeight * currentScale));
+            const w = `${cssWidth}px`;
+            const h = `${cssHeight}px`;
+            renderEditorDisplay();
+            canvas.style.width = w;
+            canvas.style.height = h;
+            previewCanvas.style.width = w;
+            previewCanvas.style.height = h;
         }
 
         function isCanvasFullscreen() {
@@ -14609,6 +14822,8 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
         });
 
         window.addEventListener('resize', () => {
+            if (!isCanvasFullscreen()) renderEditorDisplay();
+            applyConverterZoom();
             if (isTextToolPopupOpen()) positionTextToolPopup();
             if (colorPickerWindow.classList.contains("visible")) positionColorPickerWindow();
             if (materialListWindow.classList.contains("visible")) positionMaterialListWindow();
@@ -14667,12 +14882,8 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
             const mapXUnderMouse = (e.clientX - rectBefore.left) / renderedScaleX;
             const mapZUnderMouse = (e.clientY - rectBefore.top) / renderedScaleY;
 
-            const zoomSpeed = 0.15;
-            let direction = e.deltaY > 0 ? -1 : 1;
-            
-            currentScale += direction * zoomSpeed * currentScale; 
-            if (currentScale < minimumCanvasScale()) currentScale = minimumCanvasScale();
-            if (currentScale > 30) currentScale = 30;
+            const direction = e.deltaY > 0 ? -1 : 1;
+            currentScale = nextPreviewZoomStep(currentScale, direction, minimumCanvasScale(), 30);
             
             applyZoom();
 
