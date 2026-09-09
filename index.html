@@ -121,7 +121,8 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
 
         body[data-active-workspace="home"] #workspaceHome,
         body[data-active-workspace="converter"] #workspaceConverter,
-        body[data-active-workspace="editor"] #workspaceEditor {
+        body[data-active-workspace="editor"] #workspaceEditor,
+        body[data-active-workspace="materials"] #workspaceNbtMaterials {
             display: flex;
         }
 
@@ -139,17 +140,21 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
 
         body[data-active-workspace="home"] .color-picker-window,
         body[data-active-workspace="converter"] .color-picker-window,
+        body[data-active-workspace="materials"] .color-picker-window,
         body[data-active-workspace="home"] .material-list-window,
         body[data-active-workspace="converter"] .material-list-window,
+        body[data-active-workspace="materials"] .material-list-window,
         body[data-active-workspace="home"] .replace-color-window,
         body[data-active-workspace="converter"] .replace-color-window,
+        body[data-active-workspace="materials"] .replace-color-window,
         body[data-active-workspace="home"] .converter-preset-window,
-        body[data-active-workspace="editor"] .converter-preset-window {
+        body[data-active-workspace="editor"] .converter-preset-window,
+        body[data-active-workspace="materials"] .converter-preset-window {
             display: none !important;
         }
 
         .home-panel {
-            width: min(860px, calc(100vw - 48px));
+            width: min(1080px, calc(100vw - 48px));
             display: grid;
             gap: 20px;
             justify-items: center;
@@ -170,9 +175,9 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
         }
 
         .home-actions {
-            width: min(760px, 100%);
+            width: min(1040px, 100%);
             display: grid;
-            grid-template-columns: repeat(2, minmax(0, 1fr));
+            grid-template-columns: repeat(3, minmax(0, 1fr));
             gap: 14px;
         }
 
@@ -205,6 +210,264 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
             color: #a6adc8;
             font-weight: normal;
             line-height: 1.35;
+        }
+
+        #workspaceNbtMaterials {
+            flex-direction: column;
+            align-items: center;
+            overflow: auto;
+            padding: 24px 16px 70px;
+        }
+
+        .nbt-materials-workspace {
+            width: min(1080px, 100%);
+            display: grid;
+            gap: 14px;
+        }
+
+        .nbt-materials-heading {
+            text-align: center;
+        }
+
+        .nbt-materials-heading h1 {
+            margin: 0 0 6px;
+            font-size: clamp(28px, 4vw, 42px);
+        }
+
+        .nbt-materials-heading p {
+            margin: 0;
+        }
+
+        .nbt-materials-drop-zone {
+            min-height: 116px;
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: center;
+            gap: 12px 18px;
+            padding: 20px;
+            background: #252536;
+            border: 2px dashed #585b70;
+            border-radius: 10px;
+            transition: border-color 120ms ease, background-color 120ms ease;
+        }
+
+        .nbt-materials-drop-zone.drag-over {
+            background: #313244;
+            border-color: #89b4fa;
+        }
+
+        .nbt-materials-drop-copy {
+            display: grid;
+            gap: 4px;
+            text-align: left;
+        }
+
+        .nbt-materials-drop-copy strong {
+            color: #f5e0dc;
+            font-size: 16px;
+        }
+
+        .nbt-materials-drop-copy span {
+            color: #a6adc8;
+            font-size: 12px;
+        }
+
+        .nbt-materials-file-button {
+            position: relative;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 36px;
+            padding: 8px 14px;
+            border-radius: 6px;
+            background: #89b4fa;
+            color: #11111b;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
+        .nbt-materials-file-button:hover {
+            background: #b4befe;
+        }
+
+        .nbt-materials-file-button input {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        .nbt-materials-actions {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+        }
+
+        .nbt-materials-status {
+            min-width: 0;
+            color: #a6adc8;
+            font-size: 12px;
+        }
+
+        .nbt-materials-status.error {
+            color: #f38ba8;
+        }
+
+        .nbt-materials-action-buttons {
+            display: flex;
+            gap: 8px;
+        }
+
+        .nbt-materials-action-buttons button,
+        .nbt-material-file-remove {
+            padding: 7px 11px;
+            border-radius: 5px;
+            border: 1px solid #6c7086;
+            background: #45475a;
+            color: #cdd6f4;
+            font-weight: bold;
+        }
+
+        .nbt-materials-action-buttons button:hover:not(:disabled),
+        .nbt-material-file-remove:hover:not(:disabled) {
+            background: #585b70;
+        }
+
+        .nbt-materials-action-buttons button:disabled,
+        .nbt-material-file-remove:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .nbt-materials-grid {
+            min-height: 360px;
+            display: grid;
+            grid-template-columns: minmax(300px, 0.85fr) minmax(360px, 1.15fr);
+            gap: 14px;
+        }
+
+        .nbt-materials-panel {
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            background: #313244;
+            border: 1px solid #585b70;
+            border-radius: 8px;
+        }
+
+        .nbt-materials-panel-header,
+        .nbt-materials-column-header {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .nbt-materials-panel-header {
+            min-height: 42px;
+            padding: 8px 12px;
+            background: #45475a;
+            border-bottom: 1px solid #585b70;
+        }
+
+        .nbt-materials-panel-header h2 {
+            margin: 0;
+            font-size: 15px;
+        }
+
+        .nbt-materials-panel-summary {
+            color: #f9e2af;
+            font-size: 11px;
+            font-weight: bold;
+            white-space: nowrap;
+        }
+
+        .nbt-materials-file-list,
+        .nbt-materials-result-list {
+            min-height: 0;
+            overflow: auto;
+        }
+
+        .nbt-material-file-row,
+        .nbt-material-result-row {
+            display: grid;
+            align-items: center;
+            gap: 10px;
+            padding: 9px 11px;
+            border-bottom: 1px solid #45475a;
+        }
+
+        .nbt-material-file-row {
+            grid-template-columns: minmax(0, 1fr) auto;
+        }
+
+        .nbt-material-file-main {
+            min-width: 0;
+            display: grid;
+            gap: 3px;
+        }
+
+        .nbt-material-file-name,
+        .nbt-material-result-name {
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .nbt-material-file-detail,
+        .nbt-material-result-id {
+            min-width: 0;
+            overflow: hidden;
+            color: #a6adc8;
+            font-size: 10px;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .nbt-material-file-detail.warning {
+            color: #f9e2af;
+        }
+
+        .nbt-material-file-remove {
+            padding: 5px 8px;
+            font-size: 11px;
+        }
+
+        .nbt-materials-column-header {
+            padding: 7px 11px;
+            color: #a6adc8;
+            border-bottom: 1px solid #45475a;
+            font-size: 10px;
+            font-weight: bold;
+            text-transform: uppercase;
+        }
+
+        .nbt-material-result-row {
+            grid-template-columns: minmax(0, 1fr) auto;
+        }
+
+        .nbt-material-result-main {
+            min-width: 0;
+            display: grid;
+            gap: 2px;
+        }
+
+        .nbt-material-result-amount {
+            color: #f9e2af;
+            font-weight: bold;
+            white-space: nowrap;
+        }
+
+        .nbt-materials-empty {
+            padding: 24px 14px;
+            color: #a6adc8;
+            text-align: center;
         }
         
         .toolbar {
@@ -2453,6 +2716,19 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
                 grid-template-columns: 1fr;
             }
 
+            #workspaceNbtMaterials {
+                padding-inline: 0;
+            }
+
+            .nbt-materials-grid {
+                grid-template-columns: 1fr;
+                min-height: 0;
+            }
+
+            .nbt-materials-panel {
+                min-height: 260px;
+            }
+
             .converter-workspace {
                 width: calc(100vw - 16px);
                 grid-template-columns: 1fr;
@@ -2677,13 +2953,14 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
             <button class="studio-tab active" type="button" data-workspace-tab="home">Home</button>
             <button class="studio-tab" type="button" data-workspace-tab="converter">Image to NBT Converter</button>
             <button class="studio-tab" type="button" data-workspace-tab="editor">NBT Editor</button>
+            <button class="studio-tab" type="button" data-workspace-tab="materials">NBT to Material List</button>
         </nav>
 
         <main class="workspace-stack">
             <section class="workspace-view" id="workspaceHome" aria-label="Home">
                 <div class="home-panel">
                     <h1>Mapart Studio</h1>
-                    <p>Choose a workspace. Tabs keep their state while you move between conversion and editing.</p>
+                    <p>Choose a workspace. Tabs keep their state while you move between tools.</p>
                     <div class="home-actions">
                         <button class="home-action" type="button" data-open-workspace="converter">
                             <strong>Image to NBT Converter</strong>
@@ -2692,6 +2969,10 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
                         <button class="home-action" type="button" data-open-workspace="editor">
                             <strong>NBT Editor</strong>
                             <span>Open or edit existing MapArtCraft-style NBT structures with the current editor tools.</span>
+                        </button>
+                        <button class="home-action" type="button" data-open-workspace="materials">
+                            <strong>NBT to Material List</strong>
+                            <span>Combine the required blocks from multiple NBT files or ZIP archives into one material list.</span>
                         </button>
                     </div>
                 </div>
@@ -3247,6 +3528,60 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
             <div class="replace-color-status" id="replaceColorStatus"></div>
         </div>
     </div>
+            </section>
+
+            <section class="workspace-view" id="workspaceNbtMaterials" aria-label="NBT to Material List">
+                <div class="nbt-materials-workspace">
+                    <header class="nbt-materials-heading">
+                        <h1>NBT to Material List</h1>
+                        <p>Upload carpet, flat full-block, or staircased structure NBTs. ZIP archives can contain multiple NBT files.</p>
+                    </header>
+
+                    <div class="nbt-materials-drop-zone" id="nbtMaterialsDropZone">
+                        <div class="nbt-materials-drop-copy">
+                            <strong>Drop NBT or ZIP files here</strong>
+                            <span>All non-air blocks—including supports and nooblines—are added to the combined total.</span>
+                        </div>
+                        <label class="nbt-materials-file-button">
+                            Add NBT / ZIP Files
+                            <input type="file" id="nbtMaterialsInput" accept=".nbt,.zip,application/zip,application/x-zip-compressed" multiple>
+                        </label>
+                    </div>
+
+                    <div class="nbt-materials-actions">
+                        <div class="nbt-materials-status" id="nbtMaterialsStatus" role="status">No NBT files loaded.</div>
+                        <div class="nbt-materials-action-buttons">
+                            <button type="button" id="nbtMaterialsClear" disabled>Clear All</button>
+                            <button type="button" id="nbtMaterialsDownload" disabled>Download TXT</button>
+                        </div>
+                    </div>
+
+                    <div class="nbt-materials-grid">
+                        <section class="nbt-materials-panel" aria-labelledby="nbtMaterialsFilesHeading">
+                            <div class="nbt-materials-panel-header">
+                                <h2 id="nbtMaterialsFilesHeading">Uploaded NBTs</h2>
+                                <span class="nbt-materials-panel-summary" id="nbtMaterialsFileSummary">0 files</span>
+                            </div>
+                            <div class="nbt-materials-file-list" id="nbtMaterialsFileList">
+                                <div class="nbt-materials-empty">Add one or more NBT files to begin.</div>
+                            </div>
+                        </section>
+
+                        <section class="nbt-materials-panel" aria-labelledby="nbtMaterialsResultHeading">
+                            <div class="nbt-materials-panel-header">
+                                <h2 id="nbtMaterialsResultHeading">Combined Materials</h2>
+                                <span class="nbt-materials-panel-summary" id="nbtMaterialsTotalSummary">0 blocks</span>
+                            </div>
+                            <div class="nbt-materials-column-header" aria-hidden="true">
+                                <span>Material</span>
+                                <span>Amount</span>
+                            </div>
+                            <div class="nbt-materials-result-list" id="nbtMaterialsResultList">
+                                <div class="nbt-materials-empty">The combined material list will appear here.</div>
+                            </div>
+                        </section>
+                    </div>
+                </div>
             </section>
         </main>
     </div>
@@ -4302,6 +4637,15 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
 
         const studioTabs = Array.from(document.querySelectorAll("[data-workspace-tab]"));
         const studioOpenButtons = Array.from(document.querySelectorAll("[data-open-workspace]"));
+        const nbtMaterialsDropZone = document.getElementById("nbtMaterialsDropZone");
+        const nbtMaterialsInput = document.getElementById("nbtMaterialsInput");
+        const nbtMaterialsStatus = document.getElementById("nbtMaterialsStatus");
+        const nbtMaterialsClear = document.getElementById("nbtMaterialsClear");
+        const nbtMaterialsDownload = document.getElementById("nbtMaterialsDownload");
+        const nbtMaterialsFileSummary = document.getElementById("nbtMaterialsFileSummary");
+        const nbtMaterialsTotalSummary = document.getElementById("nbtMaterialsTotalSummary");
+        const nbtMaterialsFileList = document.getElementById("nbtMaterialsFileList");
+        const nbtMaterialsResultList = document.getElementById("nbtMaterialsResultList");
         const converterImageInput = document.getElementById("converterImageInput");
         const converterImageFileName = document.getElementById("converterImageFileName");
         const converterMode = document.getElementById("converterMode");
@@ -4414,9 +4758,12 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
         let converterPanStartY = 0;
         let converterPanStartScrollLeft = 0;
         let converterPanStartScrollTop = 0;
+        let nbtMaterialRecords = [];
+        let nbtMaterialNextRecordId = 1;
+        let nbtMaterialsProcessing = false;
 
         function switchStudioWorkspace(workspace) {
-            const target = ["home", "converter", "editor"].includes(workspace) ? workspace : "home";
+            const target = ["home", "converter", "editor", "materials"].includes(workspace) ? workspace : "home";
             document.body.dataset.activeWorkspace = target;
             studioTabs.forEach(tab => {
                 const active = tab.dataset.workspaceTab === target;
@@ -4430,6 +4777,8 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
                 }, 0);
             } else if (target === "converter") {
                 setTimeout(applyConverterZoom, 0);
+            } else if (target === "materials") {
+                setTimeout(renderNbtMaterialsWorkspace, 0);
             }
         }
 
@@ -11094,6 +11443,73 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
                 .join("\n") + "\n";
         }
 
+        const NBT_MATERIAL_IGNORED_BLOCKS = new Set([
+            "minecraft:air",
+            "minecraft:cave_air",
+            "minecraft:void_air",
+            "minecraft:structure_void"
+        ]);
+
+        function structurePaletteFromNbtRoot(nbtRoot) {
+            const root = nbtRoot && nbtRoot.value;
+            const palette = root && root.palette && root.palette.value && root.palette.value.list;
+            if (Array.isArray(palette)) return palette;
+
+            const palettes = root && root.palettes && root.palettes.value && root.palettes.value.list;
+            if (!Array.isArray(palettes) || palettes.length === 0) return null;
+            const firstPalette = palettes[0];
+            return firstPalette && Array.isArray(firstPalette.list) ? firstPalette.list : null;
+        }
+
+        function analyzeNbtMaterialRoot(nbtRoot) {
+            if (!nbtRoot || nbtRoot.type !== 10 || !nbtRoot.value) {
+                throw new Error("The file does not contain an NBT compound root.");
+            }
+
+            const palette = structurePaletteFromNbtRoot(nbtRoot);
+            if (!palette) throw new Error("No vanilla structure palette was found.");
+
+            const blocks = nbtRoot.value.blocks && nbtRoot.value.blocks.value && nbtRoot.value.blocks.value.list;
+            if (!Array.isArray(blocks)) throw new Error("No vanilla structure block list was found.");
+
+            const counts = new Map();
+            let ignoredBlocks = 0;
+            let invalidReferences = 0;
+
+            for (const block of blocks) {
+                const stateId = block && block.state ? block.state.value : null;
+                const entry = Number.isInteger(stateId) ? palette[stateId] : null;
+                const registryName = getPaletteEntryName(entry);
+                if (!entry || !registryName) {
+                    invalidReferences++;
+                    continue;
+                }
+                if (NBT_MATERIAL_IGNORED_BLOCKS.has(registryName)) {
+                    ignoredBlocks++;
+                    continue;
+                }
+
+                const existing = counts.get(registryName) || {
+                    key: registryName,
+                    name: materialDisplayNameForPaletteEntry(entry),
+                    count: 0
+                };
+                existing.count++;
+                counts.set(registryName, existing);
+            }
+
+            const entries = Array.from(counts.values()).sort((a, b) =>
+                b.count - a.count || a.name.localeCompare(b.name)
+            );
+            return {
+                entries,
+                totalBlocks: entries.reduce((sum, entry) => sum + entry.count, 0),
+                listedBlocks: blocks.length,
+                ignoredBlocks,
+                invalidReferences
+            };
+        }
+
         function safeDownloadBaseName(name) {
             return String(name || "nbt_mapart")
                 .replace(/[<>:"/\\|?*]+/g, "_")
@@ -11102,28 +11518,283 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
         }
 
         function countMaterialsFromNbtRoot(nbtRoot) {
-            const palette = nbtRoot.value.palette.value.list;
-            const blocks = nbtRoot.value.blocks.value.list;
-            const counts = new Map();
+            return analyzeNbtMaterialRoot(nbtRoot).entries;
+        }
 
-            for (const block of blocks) {
-                const stateId = block.state.value;
-                const entry = palette[stateId];
-                if (!entry || getPaletteEntryName(entry) === "minecraft:air") continue;
-                const key = getPaletteEntryName(entry);
-                const existing = counts.get(key) || {
-                    key,
-                    name: materialDisplayNameForPaletteEntry(entry),
-                    count: 0
-                };
-                existing.count++;
-                counts.set(key, existing);
+        function combinedNbtMaterialEntries() {
+            const combined = new Map();
+            for (const record of nbtMaterialRecords) {
+                for (const entry of record.entries) {
+                    const existing = combined.get(entry.key) || { ...entry, count: 0 };
+                    existing.count += entry.count;
+                    combined.set(entry.key, existing);
+                }
             }
-
-            return Array.from(counts.values()).sort((a, b) =>
+            return Array.from(combined.values()).sort((a, b) =>
                 b.count - a.count || a.name.localeCompare(b.name)
             );
         }
+
+        function setNbtMaterialsStatus(message, error = false, fullMessage = "") {
+            if (!nbtMaterialsStatus) return;
+            nbtMaterialsStatus.textContent = message || "";
+            nbtMaterialsStatus.title = fullMessage || message || "";
+            nbtMaterialsStatus.classList.toggle("error", !!error);
+        }
+
+        function renderNbtMaterialsWorkspace() {
+            if (!nbtMaterialsFileList || !nbtMaterialsResultList) return;
+            const entries = combinedNbtMaterialEntries();
+            const totalBlocks = entries.reduce((sum, entry) => sum + entry.count, 0);
+            const fileCount = nbtMaterialRecords.length;
+
+            nbtMaterialsFileSummary.textContent = `${fileCount} NBT file${fileCount === 1 ? "" : "s"}`;
+            nbtMaterialsTotalSummary.textContent = `${totalBlocks} block${totalBlocks === 1 ? "" : "s"}`;
+            nbtMaterialsClear.disabled = nbtMaterialsProcessing || fileCount === 0;
+            nbtMaterialsDownload.disabled = nbtMaterialsProcessing || fileCount === 0;
+            nbtMaterialsInput.disabled = nbtMaterialsProcessing;
+
+            nbtMaterialsFileList.innerHTML = "";
+            if (fileCount === 0) {
+                const empty = document.createElement("div");
+                empty.className = "nbt-materials-empty";
+                empty.textContent = "Add one or more NBT files to begin.";
+                nbtMaterialsFileList.appendChild(empty);
+            } else {
+                for (const record of nbtMaterialRecords) {
+                    const row = document.createElement("div");
+                    row.className = "nbt-material-file-row";
+
+                    const main = document.createElement("div");
+                    main.className = "nbt-material-file-main";
+                    const name = document.createElement("strong");
+                    name.className = "nbt-material-file-name";
+                    name.textContent = record.name;
+                    name.title = record.name;
+
+                    const detail = document.createElement("span");
+                    detail.className = "nbt-material-file-detail";
+                    const sourcePrefix = record.archiveName ? `From ${record.archiveName} · ` : "";
+                    detail.textContent = `${sourcePrefix}${record.totalBlocks} material block${record.totalBlocks === 1 ? "" : "s"}`;
+                    if (record.invalidReferences > 0) {
+                        detail.classList.add("warning");
+                        detail.textContent += ` · ${record.invalidReferences} invalid palette reference${record.invalidReferences === 1 ? "" : "s"} ignored`;
+                    }
+
+                    const remove = document.createElement("button");
+                    remove.type = "button";
+                    remove.className = "nbt-material-file-remove";
+                    remove.dataset.recordId = String(record.id);
+                    remove.textContent = "Remove";
+                    remove.disabled = nbtMaterialsProcessing;
+                    remove.setAttribute("aria-label", `Remove ${record.name}`);
+
+                    main.appendChild(name);
+                    main.appendChild(detail);
+                    row.appendChild(main);
+                    row.appendChild(remove);
+                    nbtMaterialsFileList.appendChild(row);
+                }
+            }
+
+            nbtMaterialsResultList.innerHTML = "";
+            if (entries.length === 0) {
+                const empty = document.createElement("div");
+                empty.className = "nbt-materials-empty";
+                empty.textContent = fileCount === 0
+                    ? "The combined material list will appear here."
+                    : "No material blocks were found in the loaded NBTs.";
+                nbtMaterialsResultList.appendChild(empty);
+                return;
+            }
+
+            for (const entry of entries) {
+                const row = document.createElement("div");
+                row.className = "nbt-material-result-row";
+                const main = document.createElement("div");
+                main.className = "nbt-material-result-main";
+                const name = document.createElement("span");
+                name.className = "nbt-material-result-name";
+                name.textContent = entry.name;
+                name.title = entry.name;
+                const id = document.createElement("span");
+                id.className = "nbt-material-result-id";
+                id.textContent = entry.key;
+                const amount = document.createElement("span");
+                amount.className = "nbt-material-result-amount";
+                amount.textContent = formatMaterialAmount(entry.count);
+                main.appendChild(name);
+                main.appendChild(id);
+                row.appendChild(main);
+                row.appendChild(amount);
+                nbtMaterialsResultList.appendChild(row);
+            }
+        }
+
+        function decodeNbtMaterialBytes(bytes) {
+            const input = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+            const gzipCompressed = input.length >= 2 && input[0] === 0x1f && input[1] === 0x8b;
+            if (!gzipCompressed) return input;
+            if (!window.pako || typeof pako.ungzip !== "function") {
+                throw new Error("The gzip library is unavailable.");
+            }
+            try {
+                return pako.ungzip(input);
+            } catch (error) {
+                throw new Error("The gzip-compressed NBT could not be decompressed.");
+            }
+        }
+
+        function addNbtMaterialRecord(bytes, name, archiveName = "") {
+            const decoded = decodeNbtMaterialBytes(bytes);
+            let root;
+            try {
+                root = new NBTParser(decoded).readTag();
+            } catch (error) {
+                throw new Error("The NBT data could not be parsed.");
+            }
+            const analysis = analyzeNbtMaterialRoot(root);
+            nbtMaterialRecords.push({
+                id: nbtMaterialNextRecordId++,
+                name,
+                archiveName,
+                entries: analysis.entries,
+                totalBlocks: analysis.totalBlocks,
+                listedBlocks: analysis.listedBlocks,
+                ignoredBlocks: analysis.ignoredBlocks,
+                invalidReferences: analysis.invalidReferences
+            });
+        }
+
+        async function loadNbtMaterialsFromZip(file, failures) {
+            if (!window.JSZip || typeof JSZip.loadAsync !== "function") {
+                throw new Error("ZIP support is unavailable because JSZip did not load.");
+            }
+            const zip = await JSZip.loadAsync(file);
+            const nbtEntries = Object.values(zip.files)
+                .filter(entry => !entry.dir && /\.nbt$/i.test(entry.name) && !/(^|\/)__MACOSX\//i.test(entry.name))
+                .sort((a, b) => a.name.localeCompare(b.name));
+            if (nbtEntries.length === 0) throw new Error("The ZIP does not contain any NBT files.");
+
+            let loaded = 0;
+            for (const entry of nbtEntries) {
+                try {
+                    addNbtMaterialRecord(await entry.async("uint8array"), entry.name, file.name);
+                    loaded++;
+                } catch (error) {
+                    failures.push(`${file.name} / ${entry.name}: ${error.message}`);
+                }
+            }
+            return loaded;
+        }
+
+        async function processNbtMaterialUploads(fileList) {
+            if (nbtMaterialsProcessing) return;
+            const files = Array.from(fileList || []);
+            if (files.length === 0) return;
+
+            nbtMaterialsProcessing = true;
+            renderNbtMaterialsWorkspace();
+            setNbtMaterialsStatus(`Processing ${files.length} selected file${files.length === 1 ? "" : "s"}...`);
+            let loaded = 0;
+            const failures = [];
+
+            try {
+                for (const file of files) {
+                    const lowerName = String(file.name || "").toLowerCase();
+                    try {
+                        if (lowerName.endsWith(".zip")) {
+                            loaded += await loadNbtMaterialsFromZip(file, failures);
+                        } else if (lowerName.endsWith(".nbt")) {
+                            addNbtMaterialRecord(new Uint8Array(await file.arrayBuffer()), file.name);
+                            loaded++;
+                        } else {
+                            failures.push(`${file.name}: Unsupported file type.`);
+                        }
+                    } catch (error) {
+                        failures.push(`${file.name}: ${error.message}`);
+                    }
+                    await new Promise(resolve => setTimeout(resolve, 0));
+                }
+            } finally {
+                nbtMaterialsProcessing = false;
+                if (nbtMaterialsInput) nbtMaterialsInput.value = "";
+                renderNbtMaterialsWorkspace();
+            }
+
+            if (failures.length === 0) {
+                setNbtMaterialsStatus(`Added ${loaded} NBT file${loaded === 1 ? "" : "s"}. ${nbtMaterialRecords.length} total.`);
+                return;
+            }
+
+            const fullMessage = failures.join(" | ");
+            const visibleFailures = failures.slice(0, 2).join(" | ") + (failures.length > 2 ? ` | +${failures.length - 2} more` : "");
+            setNbtMaterialsStatus(
+                `${loaded > 0 ? `Added ${loaded}. ` : ""}Skipped ${failures.length}: ${visibleFailures}`,
+                loaded === 0,
+                fullMessage
+            );
+        }
+
+        function clearNbtMaterialRecords() {
+            if (nbtMaterialsProcessing) return;
+            nbtMaterialRecords = [];
+            setNbtMaterialsStatus("No NBT files loaded.");
+            renderNbtMaterialsWorkspace();
+        }
+
+        function downloadCombinedNbtMaterialList() {
+            if (nbtMaterialRecords.length === 0) return;
+            const entries = combinedNbtMaterialEntries();
+            const totalBlocks = entries.reduce((sum, entry) => sum + entry.count, 0);
+            const header = [
+                "Combined NBT Material List",
+                `NBT files: ${nbtMaterialRecords.length}`,
+                `Total material blocks: ${totalBlocks}`,
+                ""
+            ].join("\n");
+            downloadText(header + materialListText(entries), "combined_nbt_materials.txt");
+        }
+
+        let nbtMaterialsDragDepth = 0;
+        nbtMaterialsInput.addEventListener("change", event => processNbtMaterialUploads(event.target.files));
+        nbtMaterialsClear.addEventListener("click", clearNbtMaterialRecords);
+        nbtMaterialsDownload.addEventListener("click", downloadCombinedNbtMaterialList);
+        nbtMaterialsFileList.addEventListener("click", event => {
+            const button = event.target.closest("[data-record-id]");
+            if (!button || nbtMaterialsProcessing) return;
+            const id = Number(button.dataset.recordId);
+            nbtMaterialRecords = nbtMaterialRecords.filter(record => record.id !== id);
+            setNbtMaterialsStatus(
+                nbtMaterialRecords.length === 0
+                    ? "No NBT files loaded."
+                    : `Removed one NBT file. ${nbtMaterialRecords.length} remaining.`
+            );
+            renderNbtMaterialsWorkspace();
+        });
+        ["dragenter", "dragover", "dragleave", "drop"].forEach(type => {
+            nbtMaterialsDropZone.addEventListener(type, event => {
+                event.preventDefault();
+                event.stopPropagation();
+            });
+        });
+        nbtMaterialsDropZone.addEventListener("dragenter", () => {
+            nbtMaterialsDragDepth++;
+            nbtMaterialsDropZone.classList.add("drag-over");
+        });
+        nbtMaterialsDropZone.addEventListener("dragover", event => {
+            if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+        });
+        nbtMaterialsDropZone.addEventListener("dragleave", () => {
+            nbtMaterialsDragDepth = Math.max(0, nbtMaterialsDragDepth - 1);
+            if (nbtMaterialsDragDepth === 0) nbtMaterialsDropZone.classList.remove("drag-over");
+        });
+        nbtMaterialsDropZone.addEventListener("drop", event => {
+            nbtMaterialsDragDepth = 0;
+            nbtMaterialsDropZone.classList.remove("drag-over");
+            processNbtMaterialUploads(event.dataTransfer && event.dataTransfer.files);
+        });
+        renderNbtMaterialsWorkspace();
 
         function computeMaterialListEntries() {
             if (loadedFiles.length === 0) return [];

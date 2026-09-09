@@ -1,14 +1,15 @@
 # Mapart Studio
 
-Mapart Studio is a browser-based Minecraft mapart workspace. It wraps the existing NBT Mapart Editor in a tabbed shell and adds an Image to NBT Converter workspace for turning images into mapart previews, block palettes, material counts, and exportable files.
+Mapart Studio is a browser-based Minecraft mapart workspace. It combines an Image to NBT Converter, an NBT editor, and a standalone NBT material-list tool in one tabbed interface.
 
 ## Features
 
-- Aseprite-style Home, Image to NBT Converter, and NBT Editor tabs.
+- Aseprite-style Home, Image to NBT Converter, NBT Editor, and NBT to Material List tabs.
 - Image conversion preview with crop, map size, color matching, dithering, preprocessing, grid, support block, and palette controls.
 - Converter exports for schematic NBT, split ZIP, joined NBT, map.dat, and map.dat ZIP.
 - In-memory handoff from the converter to the NBT Editor.
 - Import one or more `.nbt` structure files.
+- Combine materials from multiple direct `.nbt` files and ZIP archives without opening them in the editor.
 - Edit mapart with brush and line tools.
 - Paint exact converter dithering locally with a source-aware Dither Brush after using `Open in Editor`.
 - Supports carpet-only, full-block, and staircased mapart workflows.
@@ -26,6 +27,7 @@ From Home, choose either:
 
 - `Image to NBT Converter` to upload an image, tune conversion settings, export files, or open the result in the editor.
 - `NBT Editor` to import and edit existing structure NBT files.
+- `NBT to Material List` to add structure NBTs or ZIP archives and download one combined material list.
 
 Editor workflow:
 
