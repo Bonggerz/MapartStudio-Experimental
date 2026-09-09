@@ -4,7 +4,9 @@ Mapart Studio
 Licensed under GPL-3.0; see LICENSE.txt.
 The Image to NBT Converter and related mapart conversion behavior include
 modified/adapted GPL-3.0 work from MapArtCraft. See NOTICE.md and
-vendor/mapartcraft/LICENSE for attribution and upstream license details.
+LICENSE.txt for attribution and license details.
+The NBT to Image workspace ports GPL-3.0 reverse-decoder behavior from
+sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
 -->
 <html lang="en">
 <head>
@@ -15,6 +17,7 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
     <script src="mapartcraft_exact.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <link rel="stylesheet" href="reverse_mapart.css">
     <style>
         html {
             height: 100%;
@@ -122,7 +125,8 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
         body[data-active-workspace="home"] #workspaceHome,
         body[data-active-workspace="converter"] #workspaceConverter,
         body[data-active-workspace="editor"] #workspaceEditor,
-        body[data-active-workspace="materials"] #workspaceNbtMaterials {
+        body[data-active-workspace="materials"] #workspaceNbtMaterials,
+        body[data-active-workspace="reverse"] #workspaceReverse {
             display: flex;
         }
 
@@ -141,15 +145,19 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
         body[data-active-workspace="home"] .color-picker-window,
         body[data-active-workspace="converter"] .color-picker-window,
         body[data-active-workspace="materials"] .color-picker-window,
+        body[data-active-workspace="reverse"] .color-picker-window,
         body[data-active-workspace="home"] .material-list-window,
         body[data-active-workspace="converter"] .material-list-window,
         body[data-active-workspace="materials"] .material-list-window,
+        body[data-active-workspace="reverse"] .material-list-window,
         body[data-active-workspace="home"] .replace-color-window,
         body[data-active-workspace="converter"] .replace-color-window,
         body[data-active-workspace="materials"] .replace-color-window,
+        body[data-active-workspace="reverse"] .replace-color-window,
         body[data-active-workspace="home"] .converter-preset-window,
         body[data-active-workspace="editor"] .converter-preset-window,
-        body[data-active-workspace="materials"] .converter-preset-window {
+        body[data-active-workspace="materials"] .converter-preset-window,
+        body[data-active-workspace="reverse"] .converter-preset-window {
             display: none !important;
         }
 
@@ -177,7 +185,7 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
         .home-actions {
             width: min(1040px, 100%);
             display: grid;
-            grid-template-columns: repeat(3, minmax(0, 1fr));
+            grid-template-columns: repeat(4, minmax(0, 1fr));
             gap: 14px;
         }
 
@@ -2926,6 +2934,7 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
             <button class="studio-tab" type="button" data-workspace-tab="converter">Image to NBT Converter</button>
             <button class="studio-tab" type="button" data-workspace-tab="editor">NBT Editor</button>
             <button class="studio-tab" type="button" data-workspace-tab="materials">NBT to Material List</button>
+            <button class="studio-tab" type="button" data-workspace-tab="reverse">NBT to Image</button>
         </nav>
 
         <main class="workspace-stack">
@@ -2945,6 +2954,10 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
                         <button class="home-action" type="button" data-open-workspace="materials">
                             <strong>NBT to Material List</strong>
                             <span>Combine the required blocks from multiple NBT files or ZIP archives into one material list.</span>
+                        </button>
+                        <button class="home-action" type="button" data-open-workspace="reverse">
+                            <strong>NBT to Image</strong>
+                            <span>Reconstruct the final Minecraft map image from one NBT structure or a complete split ZIP.</span>
                         </button>
                     </div>
                 </div>
@@ -3551,6 +3564,42 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
                     </div>
                 </div>
             </section>
+
+            <section class="workspace-view" id="workspaceReverse" aria-label="NBT to Image">
+                <main class="reverse-tool">
+                    <header class="reverse-hero">
+                        <span class="reverse-eyebrow">NBT → MAP IMAGE</span>
+                        <h1>Reverse Mapart</h1>
+                        <p>Recover the final Minecraft map pixels from one structure or a complete MapArtCraft split ZIP. Everything runs locally in your browser.</p>
+                    </header>
+
+                    <section class="reverse-panel" aria-labelledby="reverseUploadHeading">
+                        <button class="reverse-drop" id="reverseDropZone" type="button">
+                            <input id="reverseFileInput" type="file" accept=".zip,.nbt,application/zip,application/x-zip-compressed" hidden>
+                            <span class="reverse-drop-icon" aria-hidden="true">⇩</span>
+                            <strong id="reverseUploadHeading">Drop ZIP or NBT</strong>
+                            <small id="reverseFileHint">or click to browse</small>
+                        </button>
+                        <div class="reverse-options">
+                            <label for="reverseColumns">Columns
+                                <input id="reverseColumns" type="number" min="1" step="1" placeholder="Auto" inputmode="numeric">
+                            </label>
+                            <span>Only needed when split filenames no longer contain coordinates.</span>
+                        </div>
+                        <button class="reverse-primary" id="reverseReconstruct" type="button" disabled>Reconstruct Image</button>
+                        <div class="reverse-progress" aria-hidden="true"><i id="reverseProgress"></i></div>
+                        <p class="reverse-status" id="reverseStatus" role="status">Drop a MapArtCraft ZIP or NBT here</p>
+                        <p class="reverse-error" id="reverseError" role="alert" hidden></p>
+                    </section>
+
+                    <section class="reverse-result" id="reverseResult" aria-live="polite">
+                        <div class="reverse-preview">
+                            <canvas id="reverseCanvas"></canvas>
+                        </div>
+                        <div class="reverse-report" id="reverseReport"></div>
+                    </section>
+                </main>
+            </section>
         </main>
     </div>
 
@@ -3579,7 +3628,9 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
         <a href="NOTICE.md" target="_blank" rel="noopener noreferrer">Notices</a>
         |
         Converter engine, block/color data, presets, and mapart behavior adapted from
-        <a href="https://github.com/mike2b2t/mapartcraft" target="_blank" rel="noopener noreferrer">MapArtCraft</a>
+        <a href="https://github.com/mike2b2t/mapartcraft" target="_blank" rel="noopener noreferrer">MapArtCraft</a>;
+        reverse decoder adapted from
+        <a href="https://github.com/sxztyson/mapartcraft" target="_blank" rel="noopener noreferrer">Tyson's fork</a>
     </div>
 
     <script data-goatcounter="https://nbtmaparteditor.goatcounter.com/count"
@@ -4731,7 +4782,7 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
         let nbtMaterialsProcessing = false;
 
         function switchStudioWorkspace(workspace) {
-            const target = ["home", "converter", "editor", "materials"].includes(workspace) ? workspace : "home";
+            const target = ["home", "converter", "editor", "materials", "reverse"].includes(workspace) ? workspace : "home";
             document.body.dataset.activeWorkspace = target;
             studioTabs.forEach(tab => {
                 const active = tab.dataset.workspaceTab === target;
@@ -15158,5 +15209,6 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
         document.getElementById('saveIndivBtn').addEventListener('click', () => processExports(false));
 
     </script>
+    <script src="reverse_mapart.js"></script>
 </body>
 </html>
