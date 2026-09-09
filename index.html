@@ -360,8 +360,7 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
             border-radius: 8px;
         }
 
-        .nbt-materials-panel-header,
-        .nbt-materials-column-header {
+        .nbt-materials-panel-header {
             display: grid;
             grid-template-columns: minmax(0, 1fr) auto;
             align-items: center;
@@ -393,17 +392,17 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
             overflow: auto;
         }
 
-        .nbt-material-file-row,
-        .nbt-material-result-row {
+        .nbt-materials-result-list {
+            background: #1e1e2e;
+        }
+
+        .nbt-material-file-row {
             display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
             align-items: center;
             gap: 10px;
             padding: 9px 11px;
             border-bottom: 1px solid #45475a;
-        }
-
-        .nbt-material-file-row {
-            grid-template-columns: minmax(0, 1fr) auto;
         }
 
         .nbt-material-file-main {
@@ -412,16 +411,14 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
             gap: 3px;
         }
 
-        .nbt-material-file-name,
-        .nbt-material-result-name {
+        .nbt-material-file-name {
             min-width: 0;
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
         }
 
-        .nbt-material-file-detail,
-        .nbt-material-result-id {
+        .nbt-material-file-detail {
             min-width: 0;
             overflow: hidden;
             color: #a6adc8;
@@ -437,31 +434,6 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
         .nbt-material-file-remove {
             padding: 5px 8px;
             font-size: 11px;
-        }
-
-        .nbt-materials-column-header {
-            padding: 7px 11px;
-            color: #a6adc8;
-            border-bottom: 1px solid #45475a;
-            font-size: 10px;
-            font-weight: bold;
-            text-transform: uppercase;
-        }
-
-        .nbt-material-result-row {
-            grid-template-columns: minmax(0, 1fr) auto;
-        }
-
-        .nbt-material-result-main {
-            min-width: 0;
-            display: grid;
-            gap: 2px;
-        }
-
-        .nbt-material-result-amount {
-            color: #f9e2af;
-            font-weight: bold;
-            white-space: nowrap;
         }
 
         .nbt-materials-empty {
@@ -3572,11 +3544,7 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
                                 <h2 id="nbtMaterialsResultHeading">Combined Materials</h2>
                                 <span class="nbt-materials-panel-summary" id="nbtMaterialsTotalSummary">0 blocks</span>
                             </div>
-                            <div class="nbt-materials-column-header" aria-hidden="true">
-                                <span>Material</span>
-                                <span>Amount</span>
-                            </div>
-                            <div class="nbt-materials-result-list" id="nbtMaterialsResultList">
+                            <div class="nbt-materials-result-list material-list-body" id="nbtMaterialsResultList">
                                 <div class="nbt-materials-empty">The combined material list will appear here.</div>
                             </div>
                         </section>
@@ -11610,22 +11578,15 @@ vendor/mapartcraft/LICENSE for attribution and upstream license details.
 
             for (const entry of entries) {
                 const row = document.createElement("div");
-                row.className = "nbt-material-result-row";
-                const main = document.createElement("div");
-                main.className = "nbt-material-result-main";
+                row.className = "material-list-row nbt-material-result-row";
                 const name = document.createElement("span");
-                name.className = "nbt-material-result-name";
+                name.className = "material-list-name nbt-material-result-name";
                 name.textContent = entry.name;
                 name.title = entry.name;
-                const id = document.createElement("span");
-                id.className = "nbt-material-result-id";
-                id.textContent = entry.key;
                 const amount = document.createElement("span");
-                amount.className = "nbt-material-result-amount";
+                amount.className = "material-list-amount nbt-material-result-amount";
                 amount.textContent = formatMaterialAmount(entry.count);
-                main.appendChild(name);
-                main.appendChild(id);
-                row.appendChild(main);
+                row.appendChild(name);
                 row.appendChild(amount);
                 nbtMaterialsResultList.appendChild(row);
             }
