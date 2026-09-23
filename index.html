@@ -2350,6 +2350,28 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
             font-size: 12px;
         }
 
+        .converter-open-progress {
+            flex: 1 0 100%;
+            height: 7px;
+            overflow: hidden;
+            border: 1px solid #45475a;
+            border-radius: 999px;
+            background: #11111b;
+        }
+
+        .converter-open-progress[hidden] {
+            display: none;
+        }
+
+        .converter-open-progress > i {
+            display: block;
+            width: 0;
+            height: 100%;
+            border-radius: inherit;
+            background: linear-gradient(90deg, #89b4fa, #a6e3a1);
+            transition: width 120ms ease-out;
+        }
+
         .converter-primary {
             background-color: #a6e3a1;
         }
@@ -3043,8 +3065,8 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
                                 <div class="converter-field">
                                     <span>Map size</span>
                                     <div class="converter-inline">
-                                        <input type="number" id="converterMapsWide" min="1" max="64" value="1" aria-label="Maps wide">
-                                        <input type="number" id="converterMapsHigh" min="1" max="64" value="1" aria-label="Maps high">
+                                        <input type="number" id="converterMapsWide" min="1" max="256" value="1" aria-label="Maps wide">
+                                        <input type="number" id="converterMapsHigh" min="1" max="256" value="1" aria-label="Maps high">
                                     </div>
                                 </div>
                                 <div class="converter-field">
@@ -3249,6 +3271,9 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
                             <button id="converterDownloadMapDat" type="button" disabled>Download map.dat</button>
                             <button id="converterDownloadMapDatZip" type="button" disabled>Download map.dat ZIP</button>
                             <button id="converterOpenEditor" type="button" disabled>Open in Editor</button>
+                            <div id="converterOpenProgressTrack" class="converter-open-progress" role="progressbar" aria-label="Opening in editor" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" hidden>
+                                <i id="converterOpenProgress"></i>
+                            </div>
                         </div>
                     </aside>
 
@@ -3745,21 +3770,32 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
         }
 
         class NBTWriter {
-            constructor() {
-                this.buffer = new Uint8Array(1024 * 1024 * 30); // 30MB buffer for huge files
+            constructor(initialCapacity = 1024 * 1024) {
+                this.buffer = new Uint8Array(Math.max(1024, initialCapacity));
                 this.view = new DataView(this.buffer.buffer);
                 this.offset = 0;
                 this.encoder = new TextEncoder('utf-8');
             }
-            writeByte(v) { this.view.setInt8(this.offset, v); this.offset += 1; }
-            writeShort(v) { this.view.setInt16(this.offset, v); this.offset += 2; }
-            writeInt(v) { this.view.setInt32(this.offset, v); this.offset += 4; }
-            writeLong(v) { this.view.setBigInt64(this.offset, BigInt(v)); this.offset += 8; }
-            writeFloat(v) { this.view.setFloat32(this.offset, v); this.offset += 4; }
-            writeDouble(v) { this.view.setFloat64(this.offset, v); this.offset += 8; }
+            ensureCapacity(additionalBytes) {
+                const required = this.offset + additionalBytes;
+                if (required <= this.buffer.byteLength) return;
+                let nextCapacity = this.buffer.byteLength;
+                while (nextCapacity < required) nextCapacity *= 2;
+                const nextBuffer = new Uint8Array(nextCapacity);
+                nextBuffer.set(this.buffer);
+                this.buffer = nextBuffer;
+                this.view = new DataView(nextBuffer.buffer);
+            }
+            writeByte(v) { this.ensureCapacity(1); this.view.setInt8(this.offset, v); this.offset += 1; }
+            writeShort(v) { this.ensureCapacity(2); this.view.setInt16(this.offset, v); this.offset += 2; }
+            writeInt(v) { this.ensureCapacity(4); this.view.setInt32(this.offset, v); this.offset += 4; }
+            writeLong(v) { this.ensureCapacity(8); this.view.setBigInt64(this.offset, BigInt(v)); this.offset += 8; }
+            writeFloat(v) { this.ensureCapacity(4); this.view.setFloat32(this.offset, v); this.offset += 4; }
+            writeDouble(v) { this.ensureCapacity(8); this.view.setFloat64(this.offset, v); this.offset += 8; }
             writeString(str) {
                 const bytes = this.encoder.encode(str);
                 this.writeShort(bytes.length);
+                this.ensureCapacity(bytes.length);
                 this.buffer.set(bytes, this.offset);
                 this.offset += bytes.length;
             }
@@ -3779,6 +3815,7 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
                     case 6: this.writeDouble(value); break;
                     case 7:
                         this.writeInt(value.length);
+                        this.ensureCapacity(value.length);
                         this.buffer.set(new Int8Array(value.buffer, value.byteOffset, value.byteLength), this.offset);
                         this.offset += value.length; break;
                     case 8: this.writeString(value); break;
@@ -4515,6 +4552,7 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
         let loadedFiles = []; 
         let mapWidth = 0, mapHeight = 0;
         let gridMap = []; 
+        let compactEditorSource = null;
         let columnCellsCache = null;
         let originalFileName = "mapartcraft_export";
         
@@ -4552,6 +4590,8 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
         let activeMaterialListDrag = null;
         let materialListRefreshQueued = false;
         let materialListComputing = false;
+        let materialListRefreshAfterStroke = false;
+        let materialListRefreshTimer = null;
         let replaceColorPosition = null;
         let activeReplaceColorDrag = null;
         let replaceColorFromItem = null;
@@ -4573,6 +4613,9 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
         let savedUndoInCurrentStroke = false;
         let strokeRenderThrottling = false;
         let queuedFullCanvasRenderFrame = null;
+        let queuedDirtyCanvasRenderFrame = null;
+        let dirtyCanvasPixelIndices = new Set();
+        let activeStrokeLayerPatch = null;
         let supportSyncDeferralDepth = 0;
         let deferredSupportSyncItems = [];
         
@@ -4587,6 +4630,8 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
         let activeShapeDraft = null;
         let activeShapeInteraction = null;
         let activeCurveDraft = null;
+        let queuedShapePreviewFrame = null;
+        let queuedShapePreviewPosition = null;
         let activeSelection = null;
         let activeSelectionInteraction = null;
         let selectionClipboard = null;
@@ -4780,9 +4825,14 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
         const converterDownloadMapDat = document.getElementById("converterDownloadMapDat");
         const converterDownloadMapDatZip = document.getElementById("converterDownloadMapDatZip");
         const converterOpenEditor = document.getElementById("converterOpenEditor");
+        const converterOpenProgressTrack = document.getElementById("converterOpenProgressTrack");
+        const converterOpenProgress = document.getElementById("converterOpenProgress");
 
         const CONVERTER_MAP_SIZE = 128;
+        const CONVERTER_MAX_MAPS = 256;
         const CONVERTER_OBJECT_PIXEL_LIMIT = 1200000;
+        const CONVERTER_COMPACT_EDITOR_THRESHOLD = CONVERTER_OBJECT_PIXEL_LIMIT;
+        const CONVERTER_RELEASE_CANVAS_PIXEL_THRESHOLD = 12000000;
         const CONVERTER_DEFAULT_PRESET_NAMES = new Set(["Everything", "Carpets"]);
         const CONVERTER_CUSTOM_PRESETS_STORAGE_KEY = "mapartStudio.converterCustomPresets";
         const CONVERTER_SELECTED_PRESET_STORAGE_KEY = "mapartStudio.converterSelectedPreset";
@@ -4812,6 +4862,8 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
         let converterPreviewVersion = 0;
         let converterPreviewWorker = null;
         let converterPreviewWorkerJobId = 0;
+        let converterEditorOpening = false;
+        let converterExporting = false;
         let converterMaterialScrollRestore = null;
         let converterIsPanning = false;
         let converterPreviousCropMode = converterCropMode.value;
@@ -4853,6 +4905,49 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
 
         function invalidatePreviewMipChainIfSourceChanged(chain, sourceCanvas) {
             if (chain[0] !== sourceCanvas) invalidatePreviewMipChain(chain, sourceCanvas);
+        }
+
+        function updatePreviewMipChainRegion(chain, sourceCanvas, bounds) {
+            invalidatePreviewMipChainIfSourceChanged(chain, sourceCanvas);
+            if (!bounds || chain.length <= 1) return;
+
+            let minX = bounds.minX;
+            let minY = bounds.minY;
+            let maxX = bounds.maxX;
+            let maxY = bounds.maxY;
+
+            for (let levelIndex = 1; levelIndex < chain.length; levelIndex++) {
+                const previous = chain[levelIndex - 1];
+                const level = chain[levelIndex];
+                const left = Math.max(0, Math.floor((minX - 2) / 2));
+                const top = Math.max(0, Math.floor((minY - 2) / 2));
+                const right = Math.min(level.width, Math.ceil((maxX + 3) / 2));
+                const bottom = Math.min(level.height, Math.ceil((maxY + 3) / 2));
+                const width = Math.max(0, right - left);
+                const height = Math.max(0, bottom - top);
+                if (width === 0 || height === 0) break;
+
+                const levelCtx = level.getContext("2d");
+                levelCtx.clearRect(left, top, width, height);
+                levelCtx.imageSmoothingEnabled = true;
+                levelCtx.imageSmoothingQuality = "high";
+                levelCtx.drawImage(
+                    previous,
+                    left * 2,
+                    top * 2,
+                    Math.min(previous.width - left * 2, width * 2),
+                    Math.min(previous.height - top * 2, height * 2),
+                    left,
+                    top,
+                    width,
+                    height
+                );
+
+                minX = left;
+                minY = top;
+                maxX = right - 1;
+                maxY = bottom - 1;
+            }
         }
 
         function renderPreviewSurface(displayCanvas, sourceCanvas, mipChain, cssWidth, cssHeight) {
@@ -4915,7 +5010,9 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
         }
 
         function nextPreviewZoomStep(scale, direction, minimum, maximum) {
-            const candidates = PREVIEW_ZOOM_STEPS.filter(value => value >= minimum - 0.000001 && value <= maximum + 0.000001);
+            const candidates = Array.from(new Set([...PREVIEW_ZOOM_STEPS, minimum, maximum]))
+                .filter(value => Number.isFinite(value) && value >= minimum - 0.000001 && value <= maximum + 0.000001)
+                .sort((a, b) => a - b);
             if (direction > 0) {
                 return candidates.find(value => value > scale + 0.000001) ?? maximum;
             }
@@ -4939,7 +5036,10 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
                     if (mapWidth > 0 && mapHeight > 0) renderFullCanvas();
                 }, 0);
             } else if (target === "converter") {
-                setTimeout(applyConverterZoom, 0);
+                setTimeout(() => {
+                    restoreReleasedConverterPreview();
+                    applyConverterZoom();
+                }, 0);
             } else if (target === "materials") {
                 setTimeout(renderNbtMaterialsWorkspace, 0);
             }
@@ -4955,6 +5055,24 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
 
         function setConverterStatus(message) {
             if (converterStatus) converterStatus.textContent = message || "";
+        }
+
+        function setConverterOpenProgress(percent, message = "") {
+            const value = Math.max(0, Math.min(100, Math.round(Number(percent) || 0)));
+            converterOpenProgressTrack.hidden = false;
+            converterOpenProgressTrack.setAttribute("aria-valuenow", String(value));
+            converterOpenProgress.style.width = `${value}%`;
+            if (message) setConverterStatus(`${message} ${value}%`);
+        }
+
+        function hideConverterOpenProgress() {
+            converterOpenProgressTrack.hidden = true;
+            converterOpenProgressTrack.setAttribute("aria-valuenow", "0");
+            converterOpenProgress.style.width = "0%";
+        }
+
+        function nextPaintFrame() {
+            return new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
         }
 
         function setConverterImageFileName(name) {
@@ -5050,12 +5168,12 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
             document.querySelectorAll(".converter-mapdat-only").forEach(row => {
                 row.style.display = mapDat ? "" : "none";
             });
-            converterDownloadNbt.disabled = !hasOutput || mapDat;
-            converterDownloadZip.disabled = !hasOutput || mapDat;
-            converterDownloadSingle.disabled = !hasOutput || mapDat;
-            converterDownloadMapDat.disabled = !hasOutput || !mapDat;
-            converterDownloadMapDatZip.disabled = !hasOutput || !mapDat;
-            converterOpenEditor.disabled = !hasOutput || mapDat;
+            converterDownloadNbt.disabled = converterExporting || !hasOutput || mapDat;
+            converterDownloadZip.disabled = converterExporting || !hasOutput || mapDat;
+            converterDownloadSingle.disabled = converterExporting || !hasOutput || mapDat;
+            converterDownloadMapDat.disabled = converterExporting || !hasOutput || !mapDat;
+            converterDownloadMapDatZip.disabled = converterExporting || !hasOutput || !mapDat;
+            converterOpenEditor.disabled = converterEditorOpening || converterExporting || !hasOutput || mapDat;
         }
 
         function updateConverterManualCropControls() {
@@ -5085,11 +5203,17 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
         }
 
         function converterMapSizeX() {
-            return Math.max(1, Math.min(64, parseInt(converterMapsWide.value, 10) || 1));
+            return Math.max(1, Math.min(CONVERTER_MAX_MAPS, parseInt(converterMapsWide.value, 10) || 1));
         }
 
         function converterMapSizeY() {
-            return Math.max(1, Math.min(64, parseInt(converterMapsHigh.value, 10) || 1));
+            return Math.max(1, Math.min(CONVERTER_MAX_MAPS, parseInt(converterMapsHigh.value, 10) || 1));
+        }
+
+        function normalizeConverterMapSizeInput(input) {
+            if (input !== converterMapsWide && input !== converterMapsHigh) return;
+            const value = Math.max(1, Math.min(CONVERTER_MAX_MAPS, parseInt(input.value, 10) || 1));
+            input.value = String(value);
         }
 
         function requireMapartCraftExact() {
@@ -6263,10 +6387,12 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
             const pixels = totalPixels <= CONVERTER_OBJECT_PIXEL_LIMIT
                 ? converterPixelsFromExactImageData(converted.pixels, width, height)
                 : [];
-            const bytes = new Uint8Array(totalPixels);
+            const bytes = converterMode.value === "mapdat" ? new Uint8Array(totalPixels) : null;
             const data = converted.pixels.data;
-            for (let index = 0, offset = 0; index < totalPixels; index++, offset += 4) {
-                bytes[index] = mapColorByteForConvertedDataOffset(data, offset);
+            if (bytes) {
+                for (let index = 0, offset = 0; index < totalPixels; index++, offset += 4) {
+                    bytes[index] = mapColorByteForConvertedDataOffset(data, offset);
+                }
             }
             return {
                 pixels,
@@ -6294,7 +6420,8 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
                 ? converterPixelsFromExactImageData({ data: pixelsData }, width, height)
                 : [];
             converterConvertedPixelCount = totalPixels;
-            converterMapColorBytes = result.mapColorBytes || new Uint8Array(result.mapColorBytesBuffer);
+            converterMapColorBytes = result.mapColorBytes ||
+                (result.mapColorBytesBuffer ? new Uint8Array(result.mapColorBytesBuffer) : null);
             converterSourceCanvas.width = width;
             converterSourceCanvas.height = height;
             converterSourceCtx.putImageData(new ImageData(pixelsData, width, height), 0, 0);
@@ -6606,6 +6733,20 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
             converterDownloadMaterials.disabled = false;
         }
 
+        function clearConverterPreviewSurfaceForBuild() {
+            converterSourceCanvas.width = 1;
+            converterSourceCanvas.height = 1;
+            converterCanvas.width = 1;
+            converterCanvas.height = 1;
+            converterCanvas.style.width = "1px";
+            converterCanvas.style.height = "1px";
+            converterGridCanvas.width = 1;
+            converterGridCanvas.height = 1;
+            converterGridCanvas.style.width = "1px";
+            converterGridCanvas.style.height = "1px";
+            invalidatePreviewMipChain(converterMipChain, converterSourceCanvas);
+        }
+
         function runConverterPreview() {
             converterPreviewQueued = false;
             const version = ++converterPreviewVersion;
@@ -6614,12 +6755,8 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
                 clearConverterConvertedOutput();
                 converterEmptyState.textContent = "No image loaded";
                 converterEmptyState.style.display = "";
-                converterSourceCanvas.width = converterOutputWidth();
-                converterSourceCanvas.height = converterOutputHeight();
-                converterSourceCtx.clearRect(0, 0, converterSourceCanvas.width, converterSourceCanvas.height);
-                invalidatePreviewMipChain(converterMipChain, converterSourceCanvas);
-                converterOutputMeta.textContent = `${converterSourceCanvas.width} x ${converterSourceCanvas.height} pixels`;
-                applyConverterZoom();
+                clearConverterPreviewSurfaceForBuild();
+                converterOutputMeta.textContent = `${converterOutputWidth()} x ${converterOutputHeight()} pixels`;
                 renderConverterMaterials();
                 restoreConverterMaterialViewport();
                 updateConverterModeControls();
@@ -6629,10 +6766,7 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
             const width = converterOutputWidth();
             const height = converterOutputHeight();
             clearConverterConvertedOutput();
-            converterSourceCanvas.width = width;
-            converterSourceCanvas.height = height;
-            converterSourceCtx.clearRect(0, 0, width, height);
-            invalidatePreviewMipChain(converterMipChain, converterSourceCanvas);
+            clearConverterPreviewSurfaceForBuild();
             converterEmptyState.textContent = "Converting preview...";
             converterEmptyState.style.display = "";
             converterOutputMeta.textContent = `${width} x ${height} pixels (${width / 128} x ${height / 128} maps)`;
@@ -6733,10 +6867,10 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
             return mapColorByteForPixel(converterPixelAt(x, y, fullWidth));
         }
 
-        function converterNbtToneForPixel(pixel) {
-            if (!converterUsesStaircasing() || !pixel || pixel.transparent) return "normal";
-            if (converterStaircasing.value === "full_dark") return "dark";
-            if (converterStaircasing.value === "full_light") return "light";
+        function converterNbtToneForPixel(pixel, staircasing = converterStaircasing.value) {
+            if (staircasing === "off" || !pixel || pixel.transparent) return "normal";
+            if (staircasing === "full_dark") return "dark";
+            if (staircasing === "full_light") return "light";
             return MAP_TONES.includes(pixel.tone) ? pixel.tone : "normal";
         }
 
@@ -6746,8 +6880,8 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
             return 0;
         }
 
-        function converterNbtInitialColumnHeight(rowCount) {
-            switch (converterStaircasing.value) {
+        function converterNbtInitialColumnHeight(rowCount, staircasing = converterStaircasing.value) {
+            switch (staircasing) {
                 case "off":
                     return 2;
                 case "full_dark":
@@ -6760,7 +6894,7 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
                 case "reverse_upwards":
                     return 0;
                 default:
-                    return converterUsesStaircasing() ? 0 : 2;
+                    return staircasing !== "off" ? 0 : 2;
             }
         }
 
@@ -6775,11 +6909,11 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
             });
         }
 
-        function converterNbtAdjustColumn(column) {
+        function converterNbtAdjustColumn(column, staircasing = converterStaircasing.value) {
             if (column.length === 0) return;
             converterNbtSortColumn(column);
 
-            switch (converterStaircasing.value) {
+            switch (staircasing) {
                 case "valley":
                 case "upwards":
                 case "reverse_upwards": {
@@ -6839,8 +6973,8 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
             }
         }
 
-        function converterNbtAddOptimizedSupports(column, layout, rowNumber, previousHeight, currentHeight, supportBlock) {
-            const mode = converterSupportMode.value;
+        function converterNbtAddOptimizedSupports(column, layout, rowNumber, previousHeight, currentHeight, supportBlock, supportMode = converterSupportMode.value) {
+            const mode = supportMode;
             if (mode === "none") return;
 
             const record = layout[rowNumber];
@@ -6937,22 +7071,25 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
             }
         }
 
-        function converterNbtPhysicalColumn(localX, globalX, startY, height, fullWidth, supportBlock, airBlock) {
+        function converterNbtPhysicalColumn(localX, globalX, startY, height, fullWidth, supportBlock, airBlock, options = {}) {
+            const pixelAt = options.pixelAt || converterPixelAt;
+            const staircasing = options.staircasing || converterStaircasing.value;
+            const supportMode = options.supportMode || converterSupportMode.value;
             const layout = [];
             for (let row = 0; row < height; row++) {
-                const pixel = converterPixelAt(globalX, startY + row, fullWidth);
+                const pixel = pixelAt(globalX, startY + row, fullWidth);
                 const transparent = !pixel || pixel.transparent;
-                const block = transparent ? airBlock : converterBlockForPixel(pixel);
+                const block = transparent ? airBlock : (pixel.block || converterBlockForPixel(pixel));
                 layout.push({
                     pixel,
                     block,
                     transparent,
-                    tone: converterNbtToneForPixel(pixel)
+                    tone: converterNbtToneForPixel(pixel, staircasing)
                 });
             }
 
             const column = [];
-            let currentHeight = converterNbtInitialColumnHeight(layout.length);
+            let currentHeight = converterNbtInitialColumnHeight(layout.length, staircasing);
             if (layout[0]) {
                 column.push({ block: layout[0].transparent ? airBlock : supportBlock, y: currentHeight, z: 0, kind: "noobline" });
             }
@@ -6963,10 +7100,10 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
                 currentHeight += converterNbtToneDelta(record.tone);
 
                 column.push({ block: record.block, y: currentHeight, z: rowNumber + 1, kind: "art" });
-                converterNbtAddOptimizedSupports(column, layout, rowNumber, previousHeight, currentHeight, supportBlock);
+                converterNbtAddOptimizedSupports(column, layout, rowNumber, previousHeight, currentHeight, supportBlock, supportMode);
             }
 
-            converterNbtAdjustColumn(column);
+            converterNbtAdjustColumn(column, staircasing);
             const airZ = new Set(column.filter(block => block.block === airBlock).map(block => block.z));
             if (airZ.size) {
                 column.forEach(block => {
@@ -7141,7 +7278,7 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
             return new Blob([createStoredZip(entries)], { type: "application/zip" });
         }
 
-        function createConverterNbtRoot(bounds = {}) {
+        function createConverterNbtBuilder(bounds = {}) {
             if (!converterHasConvertedOutput()) throw new Error("Convert an image first.");
             const fullWidth = converterOutputWidth();
             const fullHeight = converterOutputHeight();
@@ -7167,8 +7304,142 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
                 if (y > maxY) maxY = y;
             };
 
+            return {
+                width,
+                addColumn(x) {
+                    const physicalColumn = converterNbtPhysicalColumn(x, startX + x, startY, height, fullWidth, supportBlock, airBlock);
+                    for (const physicalBlock of physicalColumn) {
+                        addBlock(physicalBlock.block, physicalBlock.x, physicalBlock.y, physicalBlock.z);
+                    }
+                },
+                finish() {
+                    return {
+                        type: 10,
+                        name: "",
+                        value: {
+                            DataVersion: { type: 3, name: "DataVersion", value: converterDataVersion() },
+                            author: { type: 8, name: "author", value: "Mapart Studio" },
+                            size: { type: 9, name: "size", value: { type: 3, list: [width, maxY + 1, height + 1] } },
+                            palette: { type: 9, name: "palette", value: { type: 10, list: palette } },
+                            blocks: { type: 9, name: "blocks", value: { type: 10, list: blocks } },
+                            entities: { type: 9, name: "entities", value: { type: 10, list: [] } }
+                        }
+                    };
+                }
+            };
+        }
+
+        function createConverterNbtRoot(bounds = {}) {
+            const builder = createConverterNbtBuilder(bounds);
+            for (let x = 0; x < builder.width; x++) builder.addColumn(x);
+            return builder.finish();
+        }
+
+        async function createConverterNbtRootWithProgress(bounds = {}, onProgress = null) {
+            const builder = createConverterNbtBuilder(bounds);
+            let lastYield = performance.now();
+            for (let x = 0; x < builder.width; x++) {
+                builder.addColumn(x);
+                const now = performance.now();
+                if (x === builder.width - 1 || now - lastYield >= 80) {
+                    if (onProgress) onProgress((x + 1) / Math.max(1, builder.width));
+                    await nextPaintFrame();
+                    lastYield = performance.now();
+                }
+            }
+            return builder.finish();
+        }
+
+        function createCompactEditorExportPixelAt() {
+            const baseVisible = editorLayers.some(layer => layer.kind === "base" && layer.visible);
+            const overlays = new Map();
+
+            // Resolve the top visible paint value once per edited pixel. The old
+            // exporter called compositePixelAt() for every pixel, which repeatedly
+            // built string keys, scanned every layer, and allocated compact cells.
+            for (let layerIndex = editorLayers.length - 1; layerIndex >= 0; layerIndex--) {
+                const layer = editorLayers[layerIndex];
+                if (!layer.visible || layer.kind !== "paint" || layer.cells.size === 0) continue;
+                for (const [key, layerCell] of layer.cells) {
+                    const pos = parseLayerCellKey(key);
+                    if (!pos || pos.x < 0 || pos.x >= mapWidth || pos.z < 0 || pos.z >= mapHeight) continue;
+                    const index = pos.z * mapWidth + pos.x;
+                    if (overlays.has(index)) continue;
+                    const info = layerCellInfo(layerCell);
+                    if (info) overlays.set(index, info);
+                }
+            }
+
+            if (overlays.size === 0 && baseVisible) {
+                return (x, z) => {
+                    const base = compactEditorPixelAt(x, z);
+                    return base
+                        ? { transparent: false, block: base.block, tone: base.tone }
+                        : { transparent: true };
+                };
+            }
+
+            return (x, z) => {
+                const index = z * mapWidth + x;
+                const overlay = overlays.get(index);
+                if (overlay) {
+                    // A paint entry without an explicit manual tone keeps the
+                    // original pixel's staircase shade, matching compositePixelAt().
+                    const base = overlay.tone ? null : compactEditorPixelAt(x, z);
+                    return {
+                        transparent: false,
+                        block: overlay.block,
+                        tone: overlay.tone || (base ? base.tone : "normal")
+                    };
+                }
+                if (!baseVisible) return { transparent: true };
+                const base = compactEditorPixelAt(x, z);
+                return base
+                    ? { transparent: false, block: base.block, tone: base.tone }
+                    : { transparent: true };
+            };
+        }
+
+        function createCompactEditorNbtRoot(bounds = {}) {
+            if (!compactEditorSource) throw new Error("No compact editor map is loaded.");
+            const fullWidth = compactEditorSource.width;
+            const fullHeight = compactEditorSource.height;
+            const startX = bounds.startX || 0;
+            const startY = bounds.startY || 0;
+            const width = bounds.width || fullWidth;
+            const height = bounds.height || fullHeight;
+            const palette = [];
+            const paletteMap = new Map();
+            const blocks = [];
+            const supportBlock = supportOptionForKey(compactEditorSource.file.supportMaterialKey) || DEFAULT_SUPPORT_BLOCK;
+            const airBlock = converterAirBlockObject();
+            let maxY = 0;
+            const pixelAt = bounds.pixelAt || createCompactEditorExportPixelAt();
+            const addBlock = (block, x, y, z) => {
+                if (y < 0) return;
+                const state = addConverterPaletteBlock(palette, paletteMap, block || airBlock);
+                blocks.push({
+                    pos: { type: 9, name: "pos", value: { type: 3, list: [x, y, z] } },
+                    state: { type: 3, name: "state", value: state }
+                });
+                if (y > maxY) maxY = y;
+            };
+
             for (let x = 0; x < width; x++) {
-                const physicalColumn = converterNbtPhysicalColumn(x, startX + x, startY, height, fullWidth, supportBlock, airBlock);
+                const physicalColumn = converterNbtPhysicalColumn(
+                    x,
+                    startX + x,
+                    startY,
+                    height,
+                    fullWidth,
+                    supportBlock,
+                    airBlock,
+                    {
+                        pixelAt,
+                        staircasing: compactEditorSource.staircasing,
+                        supportMode: compactEditorSource.supportMode
+                    }
+                );
                 physicalColumn.forEach(physicalBlock => {
                     addBlock(physicalBlock.block, physicalBlock.x, physicalBlock.y, physicalBlock.z);
                 });
@@ -7178,7 +7449,7 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
                 type: 10,
                 name: "",
                 value: {
-                    DataVersion: { type: 3, name: "DataVersion", value: converterDataVersion() },
+                    DataVersion: compactEditorSource.file.nbtRoot.value.DataVersion,
                     author: { type: 8, name: "author", value: "Mapart Studio" },
                     size: { type: 9, name: "size", value: { type: 3, list: [width, maxY + 1, height + 1] } },
                     palette: { type: 9, name: "palette", value: { type: 10, list: palette } },
@@ -7195,22 +7466,83 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
             return window.pako && pako.gzip ? pako.gzip(output) : output;
         }
 
-        function downloadConverterNbt(single = true) {
+        function setConverterNbtExportProgress(button, percent, label, status) {
+            const normalized = Math.max(0, Math.min(100, Math.round(percent)));
+            button.textContent = `${label}... ${normalized}%`;
+            button.setAttribute("aria-busy", "true");
+            if (status) setConverterStatus(status);
+        }
+
+        async function downloadConverterNbt(single = true) {
+            if (!converterHasConvertedOutput() || converterExporting) return;
+            const button = single ? converterDownloadSingle : converterDownloadNbt;
+            const originalText = button.textContent;
+            converterExporting = true;
+            updateConverterModeControls();
             try {
-                downloadBlob(gzipNbtRoot(createConverterNbtRoot()), `${converterBaseName()}${single ? "_combined" : ""}.nbt`);
+                setConverterNbtExportProgress(button, 0, "Building NBT", "Preparing NBT export...");
+                await nextPaintFrame();
+
+                let root = await createConverterNbtRootWithProgress({}, fraction => {
+                    const percent = 5 + fraction * 60;
+                    setConverterNbtExportProgress(
+                        button,
+                        percent,
+                        "Building NBT",
+                        `Building NBT columns... ${Math.round(fraction * 100)}%`
+                    );
+                });
+
+                setConverterNbtExportProgress(button, 68, "Writing NBT", "Writing NBT data...");
+                await nextPaintFrame();
+                const writer = new NBTWriter();
+                writer.writeTag(root);
+                const output = writer.getOutput();
+                root = null;
+
+                setConverterNbtExportProgress(button, 84, "Compressing NBT", "Compressing NBT data...");
+                await nextPaintFrame();
+                const data = window.pako && pako.gzip ? pako.gzip(output) : output;
+
+                setConverterNbtExportProgress(button, 98, "Downloading NBT", "Starting NBT download...");
+                await nextPaintFrame();
+                downloadBlob(data, `${converterBaseName()}${single ? "_combined" : ""}.nbt`);
+                setConverterNbtExportProgress(button, 100, "NBT ready", "NBT export complete.");
+                await nextPaintFrame();
             } catch (error) {
                 setConverterStatus("NBT export failed: " + error.message);
+            } finally {
+                converterExporting = false;
+                button.textContent = originalText;
+                button.removeAttribute("aria-busy");
+                updateConverterModeControls();
             }
         }
 
+        function converterTileGrid(width = converterOutputWidth(), height = converterOutputHeight()) {
+            const cols = Math.ceil(width / CONVERTER_MAP_SIZE);
+            const rows = Math.ceil(height / CONVERTER_MAP_SIZE);
+            return { cols, rows, total: cols * rows };
+        }
+
         async function downloadConverterZip() {
-            if (!converterHasConvertedOutput()) return;
+            if (!converterHasConvertedOutput() || converterExporting) return;
+            converterExporting = true;
+            updateConverterModeControls();
+            const originalText = converterDownloadZip.textContent;
+            converterDownloadZip.setAttribute("aria-busy", "true");
             try {
+                converterDownloadZip.textContent = "Building ZIP... 0%";
+                setConverterStatus("Preparing split NBT export...");
+                await nextPaintFrame();
                 const entries = [];
+                const zip = window.JSZip ? new JSZip() : null;
                 const fullWidth = converterOutputWidth();
                 const fullHeight = converterOutputHeight();
-                const cols = Math.ceil(fullWidth / CONVERTER_MAP_SIZE);
-                const rows = Math.ceil(fullHeight / CONVERTER_MAP_SIZE);
+                const { cols, rows, total } = converterTileGrid(fullWidth, fullHeight);
+                let completed = 0;
+                let lastYield = performance.now();
+
                 for (let row = 0; row < rows; row++) {
                     for (let col = 0; col < cols; col++) {
                         const root = createConverterNbtRoot({
@@ -7219,12 +7551,42 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
                             width: Math.min(CONVERTER_MAP_SIZE, fullWidth - col * CONVERTER_MAP_SIZE),
                             height: Math.min(CONVERTER_MAP_SIZE, fullHeight - row * CONVERTER_MAP_SIZE)
                         });
-                        entries.push({ name: `${converterBaseName()}_${col}_${row}.nbt`, data: gzipNbtRoot(root) });
+                        const name = `${converterBaseName()}_${col}_${row}.nbt`;
+                        const data = gzipNbtRoot(root);
+                        if (zip) zip.file(name, data);
+                        else entries.push({ name, data });
+                        completed++;
+
+                        const now = performance.now();
+                        if (completed === total || now - lastYield >= 100) {
+                            const percent = Math.floor((completed / total) * 90);
+                            converterDownloadZip.textContent = `Building ZIP... ${percent}%`;
+                            setConverterStatus(`Building ${total.toLocaleString()} NBT tiles... ${completed.toLocaleString()} / ${total.toLocaleString()}`);
+                            await new Promise(resolve => requestAnimationFrame(resolve));
+                            lastYield = performance.now();
+                        }
                     }
                 }
-                downloadBlob(await converterZipBlob(entries), `${converterBaseName()}_split.zip`);
+
+                converterDownloadZip.textContent = "Compressing ZIP...";
+                setConverterStatus(`Compressing ${total.toLocaleString()} NBT tiles...`);
+                await new Promise(resolve => requestAnimationFrame(resolve));
+                const blob = zip
+                    ? await zip.generateAsync({ type: "blob" }, metadata => {
+                        const percent = 90 + Math.floor((Number(metadata.percent) || 0) / 10);
+                        converterDownloadZip.textContent = `Compressing ZIP... ${Math.min(100, percent)}%`;
+                        setConverterStatus(`Compressing NBT ZIP... ${Math.min(100, percent)}%`);
+                    })
+                    : new Blob([createStoredZip(entries)], { type: "application/zip" });
+                downloadBlob(blob, `${converterBaseName()}_split.zip`);
+                setConverterStatus(`ZIP ready: ${total.toLocaleString()} NBT tiles (${cols} x ${rows} maps).`);
             } catch (error) {
                 setConverterStatus("ZIP export failed: " + error.message);
+            } finally {
+                converterExporting = false;
+                converterDownloadZip.textContent = originalText;
+                converterDownloadZip.removeAttribute("aria-busy");
+                updateConverterModeControls();
             }
         }
 
@@ -7591,30 +7953,304 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
             return {
                 width,
                 height,
-                pixels: pixels.map(pixel => pixel && !pixel.transparent ? {
-                    rgb: Array.isArray(pixel.rgb) ? pixel.rgb.slice(0, 3) : null,
-                    tone: pixel.tone || "normal",
-                    colourSetId: pixel.colourSetId || null,
-                    mapartBlockId: pixel.mapartBlockId || null
-                } : null)
+                pixels
             };
         }
 
-        async function openConverterOutputInEditor() {
-            if (!converterHasConvertedOutput()) return;
-            if (loadedFiles.length > 0 && !confirm("Replace the currently loaded editor data with this converter output?")) return;
-            try {
-                const ditherSource = converterEditorDitherSourceSnapshot();
-                const data = gzipNbtRoot(createConverterNbtRoot());
-                const file = new File([data], `${converterBaseName()}_combined.nbt`, { type: "application/octet-stream" });
-                await loadEditorNbtFiles([file], {
-                    exactPixels: converterEditorExactPixelsSnapshot(),
-                    ditherSource
+        function converterEditorBlockSnapshot() {
+            const byColourSet = new Map();
+            const byMapartId = new Map();
+            const selectedBlocks = converterMapartMaterialsData?.currentSelectedBlocks || converterMapartSelectedBlocks;
+            for (const [colourSetId, blockId] of Object.entries(selectedBlocks || {})) {
+                if (blockId === "-1") continue;
+                const color = converterLegacyColorForColourSet(colourSetId);
+                const block = converterBlockFromMapartSelection(colourSetId, blockId) ||
+                    (color && COLORS_BY_ID.has(color.id) ? selectedConverterBlockForColor(color) : null);
+                if (!color || !block) continue;
+                const record = { colourSetId, color, block };
+                byColourSet.set(String(colourSetId), record);
+                const mapartId = MAPARTCRAFT_VENDOR.coloursJSON?.[colourSetId]?.mapdatId ?? color.mapartId;
+                byMapartId.set(Number(mapartId), record);
+            }
+            return { byColourSet, byMapartId };
+        }
+
+        function compactEditorPixelAt(x, z) {
+            const source = compactEditorSource;
+            if (!source || x < 0 || z < 0 || x >= source.width || z >= source.height) return null;
+            const index = z * source.width + x;
+            const offset = index * 4;
+            const data = source.pixelsData;
+            if (!data || data[offset + 3] === 0) return null;
+
+            const override = source.baseEdits.get(index);
+            if (override) return { ...override, index, x, z };
+
+            const rgb = [data[offset], data[offset + 1], data[offset + 2]];
+            const exact = converterExactColourForRgb(rgb);
+            const mapByte = source.mapColorBytes ? source.mapColorBytes[index] : 0;
+            const record = (exact && source.blocks.byColourSet.get(String(exact.colourSetId))) ||
+                source.blocks.byMapartId.get(Math.floor(mapByte / 4));
+            if (!record) return null;
+            const shade = mapByte & 3;
+            const tone = exact && MAP_TONES.includes(exact.tone)
+                ? exact.tone
+                : (shade === 2 ? "light" : shade === 0 ? "dark" : "normal");
+            return {
+                index,
+                x,
+                z,
+                color: record.color,
+                block: record.block,
+                tone,
+                rgb,
+                colourSetId: exact ? exact.colourSetId : record.colourSetId
+            };
+        }
+
+        function compactEditorCellAt(x, z) {
+            const pixel = compactEditorPixelAt(x, z);
+            if (!pixel) return null;
+            return {
+                compact: true,
+                compactIndex: pixel.index,
+                file: compactEditorSource.file,
+                globalX: x,
+                globalZ: z,
+                localX: x,
+                localZ: z,
+                rawX: x,
+                rawY: 0,
+                rawZ: z + 1,
+                colorId: pixel.color.id,
+                blockKey: pixel.block.key,
+                exactRgb: pixel.rgb,
+                exactTone: pixel.tone,
+                exactColourSetId: pixel.colourSetId,
+                exactMapartBlockId: null
+            };
+        }
+
+        function compactEditorPaintBase(cells, targetFactory) {
+            if (!compactEditorSource) return false;
+            let changed = false;
+            const changedCells = [];
+            for (const cell of uniqueCells(cells)) {
+                const target = targetFactory(cell);
+                if (!target || !target.color || !target.block) continue;
+                const current = compactEditorPixelAt(cell.globalX, cell.globalZ);
+                if (current && current.color.id === target.color.id && current.block.key === target.block.key &&
+                    normalizeTone(current.tone) === normalizeTone(target.tone)) continue;
+                compactEditorSource.baseEdits.set(cell.globalZ * mapWidth + cell.globalX, {
+                    x: cell.globalX,
+                    z: cell.globalZ,
+                    color: target.color,
+                    block: target.block,
+                    tone: normalizeTone(target.tone),
+                    rgb: target.rgb ? target.rgb.slice(0, 3) : rgbForMapTone(target.color, normalizeTone(target.tone)),
+                    colourSetId: target.colourSetId || null
                 });
+                changed = true;
+                changedCells.push(cell);
+            }
+            if (changed) queueDirtyCanvasCells(changedCells);
+            return changed;
+        }
+
+        function releaseConverterPreviewForLargeEditor() {
+            if (!compactEditorSource || compactEditorSource.width * compactEditorSource.height <= CONVERTER_RELEASE_CANVAS_PIXEL_THRESHOLD) return;
+            compactEditorSource.converterPreviewReleased = true;
+            converterSourceCanvas.width = 1;
+            converterSourceCanvas.height = 1;
+            converterCanvas.width = 1;
+            converterCanvas.height = 1;
+            converterGridCanvas.width = 1;
+            converterGridCanvas.height = 1;
+            invalidatePreviewMipChain(converterMipChain, converterSourceCanvas);
+        }
+
+        function restoreReleasedConverterPreview() {
+            const source = compactEditorSource;
+            if (!source || !source.converterPreviewReleased) return;
+            if (converterMapartMaterialsData?.pixelsData !== source.pixelsData) return;
+            converterSourceCanvas.width = source.width;
+            converterSourceCanvas.height = source.height;
+            converterSourceCtx.putImageData(new ImageData(source.pixelsData, source.width, source.height), 0, 0);
+            invalidatePreviewMipChain(converterMipChain, converterSourceCanvas);
+            source.converterPreviewReleased = false;
+        }
+
+        async function loadCompactEditorFromConverter() {
+            const width = converterOutputWidth();
+            const height = converterOutputHeight();
+            const totalPixels = width * height;
+            const pixelsData = converterMapartMaterialsData.pixelsData;
+            const blocks = converterEditorBlockSnapshot();
+
+            setConverterOpenProgress(18, "Preparing compact editor data...");
+            await nextPaintFrame();
+
+            clearEditorDitherSource();
+            originalFileName = converterBaseName();
+            resetPaletteSelectionsToDefaults();
+            resetReplaceColorTool();
+
+            for (const record of blocks.byColourSet.values()) {
+                const color = COLORS_BY_ID.get(record.color.id);
+                if (color && color.blocks.some(block => block.key === record.block.key)) {
+                    selectedBlockByColorId[color.id] = record.block.key;
+                }
+            }
+
+            const structurePalette = [];
+            const paletteKeys = new Set();
+            for (const record of blocks.byColourSet.values()) {
+                if (paletteKeys.has(record.block.key)) continue;
+                paletteKeys.add(record.block.key);
+                structurePalette.push(createPaletteEntry(record.block));
+            }
+            const syntheticRoot = {
+                type: 10,
+                name: "",
+                value: {
+                    DataVersion: { type: 3, name: "DataVersion", value: converterDataVersion() },
+                    size: { type: 9, name: "size", value: { type: 3, list: [width, 1, height + 1] } },
+                    palette: { type: 9, name: "palette", value: { type: 10, list: structurePalette } },
+                    blocks: { type: 9, name: "blocks", value: { type: 10, list: [] } },
+                    entities: { type: 9, name: "entities", value: { type: 10, list: [] } }
+                }
+            };
+            const file = {
+                name: `${converterBaseName()}_combined.nbt`,
+                nbtRoot: syntheticRoot,
+                blocksList: syntheticRoot.value.blocks.value.list,
+                structurePalette,
+                paletteKeyToIndex: buildPaletteKeyMap(structurePalette),
+                layerY: 0,
+                nooblineZ: null,
+                nooblineBlockByRawX: new Map(),
+                minX: 0,
+                minZ: 1,
+                gridX: 0,
+                gridZ: 0,
+                visibleBlocks: [],
+                topMapBlockByRawXZ: new Map(),
+                staircased: converterUsesStaircasing(),
+                supportMaterialKey: converterSupportBlockObject().key,
+                supportMode: EDITOR_SUPPORT_MODE_REQUIRED,
+                editableCellsByLocal: new Map(),
+                supportCreatedKeys: new Set(),
+                blockLookup: new Map(),
+                supportIndex: new Map()
+            };
+
+            loadedFiles = [file];
+            mapWidth = width;
+            mapHeight = height;
+            gridMap = new Array(totalPixels);
+            columnCellsCache = null;
+            compactEditorSource = {
+                width,
+                height,
+                pixelsData,
+                mapColorBytes: converterMapColorBytes,
+                blocks,
+                baseEdits: new Map(),
+                staircasing: converterStaircasing.value,
+                supportMode: converterSupportMode.value,
+                materialsData: {
+                    pixelsData,
+                    maps: converterMapartMaterialsData.maps,
+                    currentSelectedBlocks: { ...(converterMapartMaterialsData.currentSelectedBlocks || converterMapartSelectedBlocks) },
+                    width,
+                    height
+                },
+                file
+            };
+
+            setPaletteMode(converterUsesStaircasing() ? "staircased" : "fullblock", "", false);
+            selectedSupportBlock = supportOptionForKey(file.supportMaterialKey) || DEFAULT_SUPPORT_BLOCK;
+            renderSupportSelect();
+
+            setConverterOpenProgress(48, "Creating editor canvas...");
+            await nextPaintFrame();
+            canvas.width = width;
+            canvas.height = height;
+            ctx.clearRect(0, 0, width, height);
+            ctx.drawImage(converterSourceCanvas, 0, 0);
+            invalidatePreviewMipChain(editorMipChain, canvas);
+            previewCanvas.width = width;
+            previewCanvas.height = height;
+            releaseConverterPreviewForLargeEditor();
+
+            currentScale = editorFitCanvasScale(width, height);
+            undoStack = [];
+            redoStack = [];
+            resetEditorLayers();
+            const baseLayer = editorLayers[0];
+            baseLayer.locked = true;
+            const editsLayer = createLayer("Edits", "paint");
+            editorLayers.push(editsLayer);
+            activeLayerId = editsLayer.id;
+            renderLayers();
+            updateButtons();
+
+            setConverterOpenProgress(78, "Building zoom preview...");
+            await nextPaintFrame();
+            applyZoom();
+            canvasContainer.scrollLeft = Math.max(0, (canvas.offsetWidth - canvasContainer.offsetWidth) / 2);
+            canvasContainer.scrollTop = Math.max(0, (canvas.offsetHeight - canvasContainer.offsetHeight) / 2);
+            previewCtx.clearRect(0, 0, width, height);
+
+            if (totalPixels <= 4000000) {
+                setEditorDitherSource(converterEditorDitherSourceSnapshot());
+            }
+            setPaletteStatus("Large-map safe mode: the original is memory-efficient and locked; paint non-destructively on the Edits layer.");
+            return true;
+        }
+
+        async function openConverterOutputInEditor() {
+            if (!converterHasConvertedOutput() || converterEditorOpening) return;
+            if (loadedFiles.length > 0 && !confirm("Replace the currently loaded editor data with this converter output?")) return;
+            converterEditorOpening = true;
+            updateConverterModeControls();
+            setConverterOpenProgress(4, "Starting editor import...");
+            try {
+                await nextPaintFrame();
+                const pixelCount = converterConvertedPixelCount;
+                let loaded;
+                if (pixelCount > CONVERTER_COMPACT_EDITOR_THRESHOLD) {
+                    loaded = await loadCompactEditorFromConverter();
+                } else {
+                    setConverterOpenProgress(16, "Preparing NBT structure...");
+                    const ditherSource = converterEditorDitherSourceSnapshot();
+                    await nextPaintFrame();
+                    const nbtRoot = createConverterNbtRoot();
+                    setConverterOpenProgress(52, "Loading editor cells...");
+                    await nextPaintFrame();
+                    loaded = await loadEditorNbtEntries([{
+                        name: `${converterBaseName()}_combined.nbt`,
+                        nbtRoot
+                    }], {
+                        exactPixels: converterEditorExactPixelsSnapshot(),
+                        ditherSource
+                    });
+                }
+                if (!loaded) throw new Error("The converted structure could not be loaded.");
+                setConverterOpenProgress(96, "Switching to editor...");
+                await nextPaintFrame();
                 switchStudioWorkspace("editor");
+                setConverterOpenProgress(100, "Editor ready.");
+                setConverterStatus(pixelCount > CONVERTER_COMPACT_EDITOR_THRESHOLD
+                    ? `Opened ${converterMapSizeX()} x ${converterMapSizeY()} maps in memory-safe editor mode.`
+                    : "Opened converted map in editor.");
             } catch (error) {
                 setConverterStatus("Open in Editor failed: " + error.message);
                 console.error(error);
+            } finally {
+                converterEditorOpening = false;
+                updateConverterModeControls();
+                window.setTimeout(hideConverterOpenProgress, 900);
             }
         }
 
@@ -7696,6 +8332,7 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
                 renderConverterPalette();
             });
             control.addEventListener("change", () => {
+                normalizeConverterMapSizeInput(control);
                 if (control === converterMode) updateConverterModeControls();
                 if (control === converterCropMode) {
                     if (converterCropMode.value !== converterPreviousCropMode) resetConverterCropAdjustments();
@@ -8104,22 +8741,27 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
 
             if (!layerCanPaint(layer)) return true;
 
-            saveCurrentStateToUndo();
+            const changes = [];
+            const dirtyCells = [];
             let changed = 0;
             for (const cell of selectionDisplayCells(selection)) {
-                if (layer.cells.delete(layerCellKey(cell.x, cell.z))) changed++;
+                const key = layerCellKey(cell.x, cell.z);
+                if (!layer.cells.has(key)) continue;
+                changes.push([key, cloneLayerCellValue(layer.cells.get(key))]);
+                dirtyCells.push(cell);
+                layer.cells.delete(key);
+                changed++;
             }
 
             cancelActiveSelection();
             if (changed === 0) {
-                undoStack.pop();
-                updateButtons();
                 setPaletteStatus("No paint pixels deleted.");
                 return true;
             }
 
-            renderLayers();
-            renderFullCanvas();
+            undoStack.push({ historyType: "layer-patch", layerId: layer.id, changes });
+            redoStack = [];
+            queueDirtyCanvasCells(dirtyCells);
             updateButtons();
             setPaletteStatus(`Deleted ${changed} selected pixel${changed === 1 ? "" : "s"}.`);
             return true;
@@ -8560,7 +9202,8 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
             const index = activeQuickPaletteIndex();
             if (index === -1) return;
             const deletedItem = quickPaletteItems[index];
-            saveCurrentStateToUndo();
+            if (layer.kind === "paint") saveLayerStateToUndo();
+            else saveCurrentStateToUndo();
             quickPaletteItems.splice(index, 1);
             colorPickerSlots = colorPickerSlots.map(slot =>
                 quickPaletteItemsMatch(slot, deletedItem) ? null : slot
@@ -9028,7 +9671,7 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
                 hide.appendChild(eyeIcon);
                 hide.addEventListener("click", event => {
                     event.stopPropagation();
-                    saveCurrentStateToUndo();
+                    saveLayerStateToUndo();
                     layer.visible = !layer.visible;
                     renderLayers();
                     renderFullCanvas();
@@ -9055,7 +9698,7 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
                 del.addEventListener("click", event => {
                     event.stopPropagation();
                     if (layer.kind === "base") return;
-                    saveCurrentStateToUndo();
+                    saveLayerStateToUndo();
                     const removeIndex = layerIndexById(layer.id);
                     editorLayers.splice(removeIndex, 1);
                     if (activeLayerId === layer.id) activeLayerId = (editorLayers[Math.min(removeIndex, editorLayers.length - 1)] || editorLayers[0]).id;
@@ -9081,7 +9724,7 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
         }
 
         function addPaintLayer() {
-            saveCurrentStateToUndo();
+            saveLayerStateToUndo();
             const layer = createLayer(nextLayerName(), "paint");
             editorLayers.push(layer);
             activeLayerId = layer.id;
@@ -9092,7 +9735,7 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
         function toggleActiveLayerLock() {
             const layer = activeLayer();
             if (!layer) return;
-            saveCurrentStateToUndo();
+            saveLayerStateToUndo();
             layer.locked = !layer.locked;
             renderLayers();
         }
@@ -9104,7 +9747,7 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
             if (!currentLayer || currentLayer.kind === "base") return;
             if (index < 0 || nextIndex < 0 || nextIndex >= editorLayers.length) return;
             if (editorLayers[nextIndex] && editorLayers[nextIndex].kind === "base") return;
-            saveCurrentStateToUndo();
+            saveLayerStateToUndo();
             const [layer] = editorLayers.splice(index, 1);
             editorLayers.splice(nextIndex, 0, layer);
             renderLayers();
@@ -9757,6 +10400,15 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
         }
 
         function updateCellMetadata(cell) {
+            if (cell && cell.compact) {
+                const pixel = compactEditorPixelAt(cell.globalX, cell.globalZ);
+                if (!pixel) return null;
+                cell.colorId = pixel.color.id;
+                cell.blockKey = pixel.block.key;
+                cell.exactRgb = pixel.rgb;
+                cell.exactTone = pixel.tone;
+                return { color: pixel.color, block: pixel.block };
+            }
             const info = paletteInfoForState(cell.file, cell.blockRef.state.value);
             if (info) {
                 cell.colorId = info.color.id;
@@ -10101,10 +10753,11 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
             return pixel && Array.isArray(pixel.rgb) ? pixel : null;
         }
 
-        async function loadEditorNbtFiles(fileList, options = {}) {
-            const files = Array.from(fileList);
-            if (files.length === 0) return;
+        async function loadEditorNbtEntries(entryList, options = {}) {
+            const files = Array.from(entryList);
+            if (files.length === 0) return false;
 
+            compactEditorSource = null;
             clearEditorDitherSource();
             originalFileName = files[0].name.replace('.nbt', '').replace(/_[0-9\-]+_[0-9\-]+$/, '');
             document.getElementById('saveZipBtn').innerText = "Processing...";
@@ -10121,16 +10774,19 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
             let minGridZ = Infinity, maxGridZ = -Infinity;
 
             for (const file of files) {
+                const fileName = file && file.name ? file.name : "mapart.nbt";
                 try {
-                    const dataBuffer = await readFileAsync(file);
-                    let data = new Uint8Array(dataBuffer);
-                    try { data = pako.ungzip(data); } catch (err) {}
-                    
-                    const parser = new NBTParser(data);
-                    const nbtRoot = parser.readTag();
+                    let nbtRoot = file && file.nbtRoot ? file.nbtRoot : null;
+                    if (!nbtRoot) {
+                        const dataBuffer = await readFileAsync(file);
+                        let data = new Uint8Array(dataBuffer);
+                        try { data = pako.ungzip(data); } catch (err) {}
+                        const parser = new NBTParser(data);
+                        nbtRoot = parser.readTag();
+                    }
 
                     if (!nbtRoot || !nbtRoot.value.size || !nbtRoot.value.blocks) {
-                        console.warn(`Skipping ${file.name}: Not a valid structure.`);
+                        console.warn(`Skipping ${fileName}: Not a valid structure.`);
                         continue;
                     }
 
@@ -10140,14 +10796,14 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
                     } else if (nbtRoot.value.palettes) {
                         structurePalette = nbtRoot.value.palettes.value.list[0].list; 
                     } else {
-                        console.warn(`Skipping ${file.name}: No palette found.`);
+                        console.warn(`Skipping ${fileName}: No palette found.`);
                         continue;
                     }
 
                     const blocksList = nbtRoot.value.blocks.value.list;
                     const editableLayerY = detectEditableLayer(structurePalette, blocksList);
                     if (editableLayerY === -1) {
-                        console.warn(`Skipping ${file.name}: No known map-color blocks found.`);
+                        console.warn(`Skipping ${fileName}: No known map-color blocks found.`);
                         continue;
                     }
                     const nooblineZ = detectNooblineZ(nbtRoot, structurePalette, blocksList);
@@ -10165,12 +10821,12 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
                     }
 
                     if (!Number.isFinite(fMinX) || !Number.isFinite(fMinZ)) {
-                        console.warn(`Skipping ${file.name}: No editable blocks found on detected layer.`);
+                        console.warn(`Skipping ${fileName}: No editable blocks found on detected layer.`);
                         continue;
                     }
 
                     let gX = 0, gZ = 0;
-                    const match = file.name.match(/_([0-9\-]+)_([0-9\-]+)\.nbt$/);
+                    const match = fileName.match(/_([0-9\-]+)_([0-9\-]+)\.nbt$/);
                     if (match) {
                         gX = parseInt(match[1]);
                         gZ = parseInt(match[2]);
@@ -10182,7 +10838,7 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
                     if (gZ > maxGridZ) maxGridZ = gZ;
 
                     const loadedFile = {
-                        name: file.name,
+                        name: fileName,
                         nbtRoot: nbtRoot,
                         blocksList: blocksList,
                         structurePalette: structurePalette,
@@ -10206,14 +10862,14 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
                     loadedFiles.push(loadedFile);
 
                 } catch (error) {
-                    console.error(`Error loading ${file.name}:`, error);
+                    console.error(`Error loading ${fileName}:`, error);
                 }
             }
 
             if (loadedFiles.length === 0) {
                 alert("No valid map files could be loaded.");
                 document.getElementById('saveZipBtn').innerText = "Download as ZIP Folder";
-                return;
+                return false;
             }
 
             const carpetOnlyImport = loadedFiles.every(lf =>
@@ -10308,7 +10964,7 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
             previewCanvas.height = mapHeight;
             setEditorDitherSource(options.ditherSource || null);
 
-            currentScale = Math.min(4, 512 / Math.max(mapWidth, mapHeight));
+            currentScale = editorFitCanvasScale(mapWidth, mapHeight);
             applyZoom();
 
             canvasContainer.scrollLeft = (canvas.offsetWidth - canvasContainer.offsetWidth) / 2;
@@ -10317,11 +10973,22 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
             undoStack = [];
             redoStack = [];
             resetEditorLayers();
+            const baseLayer = editorLayers[0];
+            baseLayer.locked = true;
+            const editsLayer = createLayer("Edits", "paint");
+            editorLayers.push(editsLayer);
+            activeLayerId = editsLayer.id;
+            renderLayers();
             updateButtons();
             renderFullCanvas();
             previewCtx.clearRect(0, 0, mapWidth, mapHeight);
 
             document.getElementById('saveZipBtn').innerText = "Download as ZIP Folder";
+            return true;
+        }
+
+        async function loadEditorNbtFiles(fileList, options = {}) {
+            return loadEditorNbtEntries(fileList, options);
         }
 
         document.getElementById('fileInput').addEventListener('change', async function(e) {
@@ -10799,8 +11466,12 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
             const unique = [];
             const seen = new Set();
             for (const cell of cells) {
-                if (!cell || seen.has(cell)) continue;
-                seen.add(cell);
+                if (!cell) continue;
+                const key = Number.isFinite(cell.globalX) && Number.isFinite(cell.globalZ)
+                    ? cell.globalZ * mapWidth + cell.globalX
+                    : cell;
+                if (seen.has(key)) continue;
+                seen.add(key);
                 unique.push(cell);
             }
             return unique;
@@ -10864,6 +11535,7 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
 
             if (layer.kind === "paint") {
                 let changed = false;
+                const changedCells = [];
                 for (const { cell, target } of targets) {
                     const key = layerCellKey(cell.globalX, cell.globalZ);
                     const targetCell = {
@@ -10878,14 +11550,19 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
                         existing.blockKey === targetCell.blockKey &&
                         (existing.tone || null) === (targetCell.tone || null)
                     ) continue;
+                    recordLayerCellBeforeStrokeChange(layer, key);
                     layer.cells.set(key, targetCell);
                     changed = true;
+                    changedCells.push(cell);
                 }
                 if (changed) {
-                    renderLayers();
-                    renderFullCanvas();
+                    queueDirtyCanvasCells(changedCells);
                 }
                 return changed;
+            }
+
+            if (compactEditorSource) {
+                return compactEditorPaintBase(cells, cell => editorDitherTargetAt(cell.globalX, cell.globalZ));
             }
 
             const targetItems = [];
@@ -10927,7 +11604,7 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
                 item.cell.exactMapartBlockId = null;
             }
             syncSupportsForCells(supportRecords);
-            renderFullCanvas();
+            queueDirtyCanvasCells(supportRecords.map(record => record.cell));
             return true;
         }
 
@@ -10941,6 +11618,7 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
                 const targetCell = layerCellFromSelection(selectedColor, selectedDisplayTone());
                 if (!targetCell) return false;
                 let changed = false;
+                const changedCells = [];
                 for (const cell of uniqueCells(cells)) {
                     const key = layerCellKey(cell.globalX, cell.globalZ);
                     const existing = layer.cells.get(key);
@@ -10950,14 +11628,25 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
                         existing.blockKey === targetCell.blockKey &&
                         (existing.tone || null) === (targetCell.tone || null)
                     ) continue;
+                    recordLayerCellBeforeStrokeChange(layer, key);
                     layer.cells.set(key, { ...targetCell });
                     changed = true;
+                    changedCells.push(cell);
                 }
                 if (changed) {
-                    renderLayers();
-                    renderFullCanvas();
+                    queueDirtyCanvasCells(changedCells);
                 }
                 return changed;
+            }
+
+            if (compactEditorSource) {
+                const tone = manualShadingActive() ? selectedTone : "normal";
+                return compactEditorPaintBase(cells, () => ({
+                    color: selectedColor,
+                    block: targetBlock,
+                    tone,
+                    rgb: rgbForMapTone(selectedColor, tone)
+                }));
             }
 
             const targetCells = [];
@@ -10984,17 +11673,9 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
             const yChanged = applyManualShadingSolver(changedCells);
             syncSupportsForCells(supportRecords);
 
-            const canPaintDirectly = updateCanvasDirectly && !manualShadingActive() && !yChanged && !hasVisiblePaintLayers();
-            if (canPaintDirectly) {
-                for (const { cell } of targetCells) {
-                    ctx.fillStyle = rgbToCss(rgbForCellColor(cell, selectedColor));
-                    ctx.fillRect(cell.globalX, cell.globalZ, 1, 1);
-                }
-                queueEditorDisplayRender();
-                refreshMaterialListIfOpen();
-            } else {
-                renderFullCanvas();
-            }
+            queueDirtyCanvasCells((manualShadingActive() || yChanged)
+                ? supportRecords.map(record => record.cell)
+                : changedCells);
             return true;
         }
 
@@ -11067,23 +11748,115 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
             queuedFullCanvasRenderFrame = null;
         }
 
-        function renderFullCanvasNow() {
-            if (mapWidth === 0 || mapHeight === 0) return;
-            const imageData = ctx.createImageData(mapWidth, mapHeight);
+        function cancelQueuedDirtyCanvasRender() {
+            if (queuedDirtyCanvasRenderFrame !== null) {
+                cancelAnimationFrame(queuedDirtyCanvasRenderFrame);
+                queuedDirtyCanvasRenderFrame = null;
+            }
+            dirtyCanvasPixelIndices.clear();
+        }
 
-            for(let i = 0; i < gridMap.length; i++) {
-                const x = i % mapWidth;
-                const z = Math.floor(i / mapWidth);
+        function writeImageDataRgb(imageData, pixelIndex, rgb) {
+            if (!rgb || pixelIndex < 0 || pixelIndex >= mapWidth * mapHeight) return;
+            const offset = pixelIndex * 4;
+            imageData.data[offset] = rgb[0];
+            imageData.data[offset + 1] = rgb[1];
+            imageData.data[offset + 2] = rgb[2];
+            imageData.data[offset + 3] = 255;
+        }
+
+        function renderDirtyCanvasPixelsNow() {
+            if (dirtyCanvasPixelIndices.size === 0 || mapWidth === 0 || mapHeight === 0) return;
+            const indices = Array.from(dirtyCanvasPixelIndices);
+            dirtyCanvasPixelIndices.clear();
+            queuedDirtyCanvasRenderFrame = null;
+            let minX = mapWidth;
+            let minZ = mapHeight;
+            let maxX = -1;
+            let maxZ = -1;
+
+            for (const index of indices) {
+                const x = index % mapWidth;
+                const z = Math.floor(index / mapWidth);
+                if (x < minX) minX = x;
+                if (z < minZ) minZ = z;
+                if (x > maxX) maxX = x;
+                if (z > maxZ) maxZ = z;
                 const pixel = compositePixelAt(x, z);
                 if (pixel && pixel.rgb) {
-                    const [r, g, b] = pixel.rgb;
-                    const pxIdx = i * 4;
-                    imageData.data[pxIdx] = r;
-                    imageData.data[pxIdx+1] = g;
-                    imageData.data[pxIdx+2] = b;
-                    imageData.data[pxIdx+3] = 255;
+                    ctx.fillStyle = rgbToCss(pixel.rgb);
+                    ctx.fillRect(x, z, 1, 1);
+                } else {
+                    ctx.clearRect(x, z, 1, 1);
                 }
             }
+
+            updatePreviewMipChainRegion(editorMipChain, canvas, {
+                minX,
+                minY: minZ,
+                maxX,
+                maxY: maxZ
+            });
+            queueEditorDisplayRender({ preserveMipChain: true });
+            refreshMaterialListIfOpen();
+        }
+
+        function queueDirtyCanvasCells(cells) {
+            for (const cell of cells || []) {
+                const x = Number(cell && (cell.globalX ?? cell.x));
+                const z = Number(cell && (cell.globalZ ?? cell.z));
+                if (!Number.isInteger(x) || !Number.isInteger(z) || x < 0 || x >= mapWidth || z < 0 || z >= mapHeight) continue;
+                dirtyCanvasPixelIndices.add(z * mapWidth + x);
+            }
+            if (dirtyCanvasPixelIndices.size === 0 || queuedDirtyCanvasRenderFrame !== null) return;
+            queuedDirtyCanvasRenderFrame = requestAnimationFrame(renderDirtyCanvasPixelsNow);
+        }
+
+        function flushDirtyCanvasRender() {
+            if (queuedDirtyCanvasRenderFrame !== null) {
+                cancelAnimationFrame(queuedDirtyCanvasRenderFrame);
+                queuedDirtyCanvasRenderFrame = null;
+            }
+            renderDirtyCanvasPixelsNow();
+        }
+
+        function renderFullCanvasNow() {
+            if (mapWidth === 0 || mapHeight === 0) return;
+            cancelQueuedDirtyCanvasRender();
+            const imageData = ctx.createImageData(mapWidth, mapHeight);
+            const baseLayer = editorLayers.find(layer => layer.kind === "base");
+            const baseVisible = !baseLayer || baseLayer.visible;
+
+            if (compactEditorSource) {
+                if (baseVisible) {
+                    imageData.data.set(compactEditorSource.pixelsData);
+                    for (const edit of compactEditorSource.baseEdits.values()) {
+                        writeImageDataRgb(imageData, edit.z * mapWidth + edit.x, edit.rgb);
+                    }
+                }
+            } else if (baseVisible) {
+                for (let i = 0; i < gridMap.length; i++) {
+                    const cell = gridMap[i];
+                    if (!cell) continue;
+                    const info = updateCellMetadata(cell);
+                    if (!info) continue;
+                    writeImageDataRgb(imageData, i, rgbForCellColor(cell, info.color));
+                }
+            }
+
+            // Layers are stored bottom-to-top. Painting their sparse cells into the
+            // image in that order produces the same composite without looking up
+            // every layer for every pixel in the map.
+            for (const layer of editorLayers) {
+                if (!layer.visible || layer.kind !== "paint") continue;
+                for (const [key, layerCell] of layer.cells.entries()) {
+                    const pos = parseLayerCellKey(key);
+                    if (!pos || pos.x < 0 || pos.x >= mapWidth || pos.z < 0 || pos.z >= mapHeight) continue;
+                    const rgb = colorForLayerCell(layerCell, cellAtGlobal(pos.x, pos.z));
+                    writeImageDataRgb(imageData, pos.z * mapWidth + pos.x, rgb);
+                }
+            }
+
             ctx.putImageData(imageData, 0, 0);
             queueEditorDisplayRender();
             refreshMaterialListIfOpen();
@@ -11091,6 +11864,7 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
 
         function queueFullCanvasRender() {
             if (queuedFullCanvasRenderFrame !== null) return;
+            cancelQueuedDirtyCanvasRender();
             queuedFullCanvasRenderFrame = requestAnimationFrame(() => {
                 queuedFullCanvasRenderFrame = null;
                 renderFullCanvasNow();
@@ -11117,6 +11891,12 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
             if (queuedFullCanvasRenderFrame !== null) {
                 cancelQueuedFullCanvasRender();
                 renderFullCanvasNow();
+            } else {
+                flushDirtyCanvasRender();
+            }
+            if (materialListRefreshAfterStroke) {
+                materialListRefreshAfterStroke = false;
+                refreshMaterialListIfOpen();
             }
         }
 
@@ -11128,7 +11908,7 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
             for(let bx = cx - offsetStart; bx <= cx + offsetEnd; bx++) {
                 for(let bz = cz - offsetStart; bz <= cz + offsetEnd; bz++) {
                     if (bx >= 0 && bx < mapWidth && bz >= 0 && bz < mapHeight) {
-                        const cell = gridMap[bz * mapWidth + bx];
+                        const cell = cellAtGlobal(bx, bz);
                         if (cell) cells.push(cell);
                     }
                 }
@@ -11150,11 +11930,7 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
         }
 
         function drawDitherLine(x0, z0, x1, z1, updateCanvasDirectly, brushSize = currentBrushSize()) {
-            const cells = [];
-            for (const point of linePoints(x0, z0, x1, z1)) {
-                cells.push(...brushCellsAtSize(point.x, point.z, brushSize));
-            }
-            return paintDitherCells(cells, updateCanvasDirectly);
+            return paintDitherCells(cellsForShapePoints(linePoints(x0, z0, x1, z1), brushSize), updateCanvasDirectly);
         }
 
         function eraseCells(cells, updateCanvasDirectly) {
@@ -11166,14 +11942,18 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
             }
 
             let changed = false;
+            const changedCells = [];
             for (const cell of uniqueCells(cells)) {
                 const key = layerCellKey(cell.globalX, cell.globalZ);
-                if (layer.cells.delete(key)) changed = true;
+                if (!layer.cells.has(key)) continue;
+                recordLayerCellBeforeStrokeChange(layer, key);
+                layer.cells.delete(key);
+                changed = true;
+                changedCells.push(cell);
             }
 
             if (changed) {
-                renderLayers();
-                renderFullCanvas();
+                queueDirtyCanvasCells(changedCells);
             }
 
             return changed;
@@ -11185,6 +11965,7 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
 
         function cellAtGlobal(x, z) {
             if (x < 0 || x >= mapWidth || z < 0 || z >= mapHeight) return null;
+            if (compactEditorSource) return compactEditorCellAt(x, z);
             return gridMap[z * mapWidth + x] || null;
         }
 
@@ -12003,18 +12784,29 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
         function computeMaterialListEntries() {
             if (loadedFiles.length === 0) return [];
 
+            if (compactEditorSource) {
+                const exact = requireMapartCraftExact();
+                const supportName = titleWords((compactEditorSource.file.supportMaterialKey || "minecraft:cobblestone")
+                    .replace(/^minecraft:/, "")
+                    .split("|")[0]
+                    .replace(/_/g, " "));
+                return exact.materialEntries(
+                    compactEditorSource.materialsData,
+                    MAPARTCRAFT_VENDOR.coloursJSON,
+                    supportName,
+                    true
+                );
+            }
+
             const countCurrentExport = () => countMaterialsFromNbtRoot(createCombinedNbtRoot());
             if (!exportNeedsLayerFlattening()) return countCurrentExport();
 
-            const editorSnapshot = createEditorSnapshot();
-            const fileStates = captureLoadedFileStructuralState();
+            let transaction = null;
             try {
-                applyVisibleLayersToBaseForExport();
+                transaction = applyVisibleLayersToBaseForExport();
                 return countCurrentExport();
             } finally {
-                applySnapshot(editorSnapshot);
-                restoreLoadedFileStructuralState(fileStates);
-                renderFullCanvas();
+                restoreFlattenedExport(transaction);
             }
         }
 
@@ -12092,9 +12884,17 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
         }
 
         function refreshMaterialListIfOpen() {
-            if (materialListComputing || !materialWindowIsOpen() || materialListRefreshQueued) return;
+            if (materialListComputing || !materialWindowIsOpen()) return;
+            if (strokeRenderThrottling) {
+                materialListRefreshAfterStroke = true;
+                return;
+            }
             materialListRefreshQueued = true;
-            requestAnimationFrame(renderMaterialList);
+            if (materialListRefreshTimer !== null) clearTimeout(materialListRefreshTimer);
+            materialListRefreshTimer = setTimeout(() => {
+                materialListRefreshTimer = null;
+                requestAnimationFrame(renderMaterialList);
+            }, 120);
         }
 
         function clampMaterialListPosition(left, top) {
@@ -12365,7 +13165,7 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
                 const x = index % mapWidth;
                 const z = Math.floor(index / mapWidth);
 
-                const cell = gridMap[index];
+                const cell = cellAtGlobal(x, z);
                 const sourceMatches = useBaseOnlyMatch
                     ? baseCellMatchesSource(cell, source)
                     : compositeMatchesSource(x, z, source);
@@ -12876,24 +13676,65 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
             return shapePointsForTool(draft.tool, draft.x0, draft.z0, draft.x1, draft.z1, !!draft.flipSide);
         }
 
-        function paintShapePoints(points, updateCanvasDirectly, brushSize = currentBrushSize()) {
-            const cells = [];
+        function brushSpansForPoints(points, brushSize = currentBrushSize()) {
+            const size = Math.max(1, Math.floor(brushSize) || 1);
+            const offsetStart = Math.floor(size / 2);
+            const offsetEnd = size - offsetStart - 1;
+            const rowIntervals = new Map();
 
             for (const point of points) {
-                cells.push(...brushCellsAtSize(point.x, point.z, brushSize));
+                const left = Math.max(0, point.x - offsetStart);
+                const right = Math.min(mapWidth - 1, point.x + offsetEnd);
+                const top = Math.max(0, point.z - offsetStart);
+                const bottom = Math.min(mapHeight - 1, point.z + offsetEnd);
+                if (left > right || top > bottom) continue;
+
+                for (let z = top; z <= bottom; z++) {
+                    if (!rowIntervals.has(z)) rowIntervals.set(z, []);
+                    rowIntervals.get(z).push([left, right]);
+                }
             }
 
-            return paintCells(cells, updateCanvasDirectly);
+            const mergedRows = new Map();
+            rowIntervals.forEach((intervals, z) => {
+                intervals.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+                const merged = [];
+                for (const interval of intervals) {
+                    const previous = merged[merged.length - 1];
+                    if (previous && interval[0] <= previous[1] + 1) {
+                        if (interval[1] > previous[1]) previous[1] = interval[1];
+                    } else {
+                        merged.push(interval.slice());
+                    }
+                }
+                mergedRows.set(z, merged);
+            });
+            return mergedRows;
+        }
+
+        function cellsForBrushSpans(spans) {
+            const cells = [];
+            spans.forEach((intervals, z) => {
+                for (const [left, right] of intervals) {
+                    for (let x = left; x <= right; x++) {
+                        const cell = cellAtGlobal(x, z);
+                        if (cell) cells.push(cell);
+                    }
+                }
+            });
+            return cells;
+        }
+
+        function cellsForShapePoints(points, brushSize = currentBrushSize()) {
+            return cellsForBrushSpans(brushSpansForPoints(points, brushSize));
+        }
+
+        function paintShapePoints(points, updateCanvasDirectly, brushSize = currentBrushSize()) {
+            return paintCells(cellsForShapePoints(points, brushSize), updateCanvasDirectly);
         }
 
         function eraseShapePoints(points, updateCanvasDirectly, brushSize = currentBrushSize()) {
-            const cells = [];
-
-            for (const point of points) {
-                cells.push(...brushCellsAtSize(point.x, point.z, brushSize));
-            }
-
-            return eraseCells(cells, updateCanvasDirectly);
+            return eraseCells(cellsForShapePoints(points, brushSize), updateCanvasDirectly);
         }
 
         function drawLine(x0, y0, x1, y1, updateCanvasDirectly, brushSize = currentBrushSize()) {
@@ -12913,14 +13754,36 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
         }
 
         // --- PREVIEW CURSOR LAYER ---
+        const previewRgbCssCache = new Map();
+
+        function cachedPreviewRgbCss(rgb, green = null, blue = null) {
+            const channels = typeof rgb === "number" ? null : rgb;
+            const r = (channels ? channels[0] : rgb) | 0;
+            const g = (channels ? channels[1] : green) | 0;
+            const b = (channels ? channels[2] : blue) | 0;
+            const key = (r << 16) | (g << 8) | b;
+            if (!previewRgbCssCache.has(key)) previewRgbCssCache.set(key, `rgb(${r}, ${g}, ${b})`);
+            return previewRgbCssCache.get(key);
+        }
+
         function previewFillStyleAt(x, z, color = selectedColor, tone = selectedTone) {
+            if (paletteMode === "staircased" && !manualShadingActive() && compactEditorSource) {
+                const index = z * compactEditorSource.width + x;
+                const override = compactEditorSource.baseEdits.get(index);
+                if (override && Array.isArray(override.rgb)) return cachedPreviewRgbCss(override.rgb);
+                const offset = index * 4;
+                const data = compactEditorSource.pixelsData;
+                if (data && data[offset + 3] !== 0) {
+                    return cachedPreviewRgbCss(data[offset], data[offset + 1], data[offset + 2]);
+                }
+            }
             const cell = cellAtGlobal(x, z);
             const rgb = paletteMode !== "staircased"
                 ? rgbForMapTone(color, "normal")
                 : manualShadingActive()
                     ? rgbForMapTone(color, tone)
                     : (cell ? rgbForCellColor(cell, color) : rgbForMapTone(color, "normal"));
-            return rgbToCss(rgb);
+            return cachedPreviewRgbCss(rgb);
         }
 
         function previewBrush(cx, cz, size, offsetStart, color = selectedColor, tone = selectedTone) {
@@ -12947,9 +13810,60 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
         }
 
         function previewShape(tool, x0, z0, x1, z1, size, offsetStart, flipSide = false, color = selectedColor, tone = selectedTone) {
-            for (const point of shapePointsForTool(tool, x0, z0, x1, z1, flipSide)) {
-                previewBrush(point.x, point.z, size, offsetStart, color, tone);
+            previewBrushSpans(
+                brushSpansForPoints(shapePointsForTool(tool, x0, z0, x1, z1, flipSide), size),
+                color,
+                tone
+            );
+        }
+
+        function previewBrushSpans(spans, color = selectedColor, tone = selectedTone) {
+            const constantStyle = paletteMode !== "staircased" || manualShadingActive();
+            if (constantStyle) {
+                previewCtx.fillStyle = rgbToCss(rgbForMapTone(color, paletteMode === "staircased" ? tone : "normal"));
+                spans.forEach((intervals, z) => {
+                    for (const [left, right] of intervals) {
+                        previewCtx.fillRect(left, z, right - left + 1, 1);
+                    }
+                });
+                return;
             }
+
+            spans.forEach((intervals, z) => {
+                for (const [left, right] of intervals) {
+                    let runStart = left;
+                    let runStyle = previewFillStyleAt(left, z, color, tone);
+                    for (let x = left + 1; x <= right; x++) {
+                        const style = previewFillStyleAt(x, z, color, tone);
+                        if (style === runStyle) continue;
+                        previewCtx.fillStyle = runStyle;
+                        previewCtx.fillRect(runStart, z, x - runStart, 1);
+                        runStart = x;
+                        runStyle = style;
+                    }
+                    previewCtx.fillStyle = runStyle;
+                    previewCtx.fillRect(runStart, z, right - runStart + 1, 1);
+                }
+            });
+        }
+
+        function cancelQueuedShapePreview() {
+            if (queuedShapePreviewFrame !== null) cancelAnimationFrame(queuedShapePreviewFrame);
+            queuedShapePreviewFrame = null;
+            queuedShapePreviewPosition = null;
+        }
+
+        function queueShapePreview(x, z) {
+            queuedShapePreviewPosition = { x, z };
+            if (queuedShapePreviewFrame !== null) return;
+            queuedShapePreviewFrame = requestAnimationFrame(() => {
+                queuedShapePreviewFrame = null;
+                const position = queuedShapePreviewPosition;
+                queuedShapePreviewPosition = null;
+                if (position && isDrawing && isShapeTool()) {
+                    updateCursorPreview(position.x, position.z);
+                }
+            });
         }
 
         function isEditableShapeTool(tool = activeTool) {
@@ -13040,12 +13954,9 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
             }
 
             const size = activeShapeDraft.brushSize || 1;
-            const offsetStart = Math.floor(size / 2);
             const color = colorForShapeDraft(activeShapeDraft);
             const tone = toneForShapeDraft(activeShapeDraft);
-            for (const point of shapePointsForDraft(activeShapeDraft)) {
-                previewBrush(point.x, point.z, size, offsetStart, color, tone);
-            }
+            previewBrushSpans(brushSpansForPoints(shapePointsForDraft(activeShapeDraft), size), color, tone);
             positionShapeSelectionBox();
         }
 
@@ -13085,13 +13996,16 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
             const draft = { ...activeShapeDraft };
             cancelActiveShapeDraft();
 
-            saveCurrentStateToUndo();
+            beginStrokeHistoryCapture();
+            const fullSnapshotSaved = savedUndoInCurrentStroke;
             const changed = withDraftSelection(draft, () => drawShapeDraft(draft, true));
+            finishStrokeHistoryCapture(changed);
 
-            if (!changed) {
+            if (!changed && fullSnapshotSaved) {
                 undoStack.pop();
                 updateButtons();
             }
+            savedUndoInCurrentStroke = false;
 
             renderPaletteRows();
             updateCursorPreview(lastMouseX, lastMouseZ);
@@ -13123,12 +14037,9 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
             const draft = draftFromActiveCurve();
             if (!draft) return;
             const size = draft.brushSize || 1;
-            const offsetStart = Math.floor(size / 2);
             const color = colorForShapeDraft(draft);
             const tone = toneForShapeDraft(draft);
-            for (const point of shapePointsForDraft(draft)) {
-                previewBrush(point.x, point.z, size, offsetStart, color, tone);
-            }
+            previewBrushSpans(brushSpansForPoints(shapePointsForDraft(draft), size), color, tone);
         }
 
         function cancelActiveCurveDraft() {
@@ -13527,7 +14438,7 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
             if (layer.kind !== "paint") return false;
 
             if (!selection.undoSaved) {
-                saveCurrentStateToUndo();
+                saveLayerStateToUndo();
                 selection.undoSaved = true;
             }
 
@@ -13924,21 +14835,124 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
         }
 
         // --- HISTORY (UNDO/REDO) ---
+        function cloneLayerCellValue(value) {
+            return value ? { ...value } : null;
+        }
+
+        function recordLayerCellBeforeStrokeChange(layer, key) {
+            const patch = activeStrokeLayerPatch;
+            if (!patch || !layer || patch.layerId !== layer.id || patch.before.has(key)) return;
+            patch.before.set(key, layer.cells.has(key) ? cloneLayerCellValue(layer.cells.get(key)) : null);
+        }
+
+        function beginStrokeHistoryCapture() {
+            const layer = activeLayer();
+            if (layer && layer.kind === "paint") {
+                activeStrokeLayerPatch = {
+                    historyType: "layer-patch",
+                    layerId: layer.id,
+                    before: new Map()
+                };
+                savedUndoInCurrentStroke = false;
+                return;
+            }
+
+            activeStrokeLayerPatch = null;
+            saveCurrentStateToUndo();
+            savedUndoInCurrentStroke = true;
+        }
+
+        function finishStrokeHistoryCapture(commit) {
+            const patch = activeStrokeLayerPatch;
+            activeStrokeLayerPatch = null;
+            if (!patch || !commit || patch.before.size === 0) return;
+            undoStack.push({
+                historyType: "layer-patch",
+                layerId: patch.layerId,
+                changes: Array.from(patch.before.entries(), ([key, value]) => [key, cloneLayerCellValue(value)])
+            });
+            redoStack = [];
+            updateButtons();
+        }
+
+        function createLayerHistorySnapshot() {
+            return {
+                historyType: "layers-snapshot",
+                layers: editorLayers.map(serializeLayer),
+                activeLayerId
+            };
+        }
+
+        function restoreSerializedLayers(snapshot) {
+            editorLayers = (snapshot.layers || []).map(deserializeLayer);
+            activeLayerId = snapshot.activeLayerId || (editorLayers[0] && editorLayers[0].id) || null;
+            const maxLayerNumber = editorLayers.reduce((max, layer) => {
+                const match = String(layer.id).match(/layer-(\d+)/);
+                return match ? Math.max(max, Number(match[1])) : max;
+            }, 0);
+            nextLayerId = Math.max(nextLayerId, maxLayerNumber + 1);
+        }
+
+        function saveLayerStateToUndo() {
+            undoStack.push(createLayerHistorySnapshot());
+            redoStack = [];
+            updateButtons();
+        }
+
+        function applyLayerPatchHistory(entry) {
+            const layer = editorLayers.find(candidate => candidate.id === entry.layerId && candidate.kind === "paint");
+            if (!layer) return { historyType: "layer-patch", layerId: entry.layerId, changes: [] };
+
+            const inverse = [];
+            const dirtyCells = [];
+            for (const [key, previous] of entry.changes || []) {
+                inverse.push([key, layer.cells.has(key) ? cloneLayerCellValue(layer.cells.get(key)) : null]);
+                if (previous) layer.cells.set(key, cloneLayerCellValue(previous));
+                else layer.cells.delete(key);
+                const pos = parseLayerCellKey(key);
+                if (pos) dirtyCells.push(pos);
+            }
+
+            queueDirtyCanvasCells(dirtyCells);
+            flushDirtyCanvasRender();
+            return {
+                historyType: "layer-patch",
+                layerId: entry.layerId,
+                changes: inverse
+            };
+        }
+
+        function applyLayerHistorySnapshot(snapshot) {
+            const inverse = createLayerHistorySnapshot();
+            restoreSerializedLayers(snapshot);
+            renderLayers();
+            renderFullCanvas();
+            return inverse;
+        }
+
         function createEditorSnapshot() {
-            const states = new Int32Array(gridMap.length);
-            const ys = new Int32Array(gridMap.length);
-            for(let i=0; i<gridMap.length; i++) {
-                if (gridMap[i]) {
-                    states[i] = gridMap[i].blockRef.state.value;
-                    ys[i] = gridMap[i].rawY;
-                } else {
-                    states[i] = -1;
-                    ys[i] = -1;
+            let states = null;
+            let ys = null;
+            if (!compactEditorSource) {
+                states = new Int32Array(gridMap.length);
+                ys = new Int32Array(gridMap.length);
+                for(let i=0; i<gridMap.length; i++) {
+                    if (gridMap[i]) {
+                        states[i] = gridMap[i].blockRef.state.value;
+                        ys[i] = gridMap[i].rawY;
+                    } else {
+                        states[i] = -1;
+                        ys[i] = -1;
+                    }
                 }
             }
             return {
+                historyType: "snapshot",
                 states,
                 ys,
+                compactBaseEdits: compactEditorSource
+                    ? Array.from(compactEditorSource.baseEdits.entries(), ([index, edit]) => [index, { ...edit, rgb: edit.rgb.slice(0, 3) }])
+                    : null,
                 nooblineYs: loadedFiles.map(lf => Array.from(lf.nooblineBlockByRawX || [], ([rawX, block]) => [rawX, block.pos.value.list[1]])),
                 layers: editorLayers.map(serializeLayer),
                 activeLayerId,
@@ -13960,19 +14974,23 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
 
         function applySnapshot(snapshot) {
             const changedCells = [];
-            for(let i=0; i<gridMap.length; i++) {
-                const cell = gridMap[i];
-                if (!cell) continue;
+            if (compactEditorSource) {
+                compactEditorSource.baseEdits = new Map(snapshot.compactBaseEdits || []);
+            } else {
+                for(let i=0; i<gridMap.length; i++) {
+                    const cell = gridMap[i];
+                    if (!cell) continue;
 
-                const state = snapshot.states ? snapshot.states[i] : snapshot[i];
-                const y = snapshot.ys ? snapshot.ys[i] : cell.rawY;
-                if (state !== -1 && (cell.blockRef.state.value !== state || cell.rawY !== y)) {
-                    const supportChange = supportChangeRecordForCell(cell);
-                    cell.blockRef.state.value = state;
-                    clearCellExactPreview(cell);
-                    setCellY(cell, y);
-                    updateCellMetadata(cell);
-                    changedCells.push(supportChange);
+                    const state = snapshot.states ? snapshot.states[i] : snapshot[i];
+                    const y = snapshot.ys ? snapshot.ys[i] : cell.rawY;
+                    if (state !== -1 && (cell.blockRef.state.value !== state || cell.rawY !== y)) {
+                        const supportChange = supportChangeRecordForCell(cell);
+                        cell.blockRef.state.value = state;
+                        clearCellExactPreview(cell);
+                        setCellY(cell, y);
+                        updateCellMetadata(cell);
+                        changedCells.push(supportChange);
+                    }
                 }
             }
             if (changedCells.length > 0) syncSupportsForCells(changedCells);
@@ -13988,15 +15006,7 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
                     }
                 });
             }
-            if (snapshot.layers) {
-                editorLayers = snapshot.layers.map(deserializeLayer);
-                activeLayerId = snapshot.activeLayerId || (editorLayers[0] && editorLayers[0].id) || null;
-                const maxLayerNumber = editorLayers.reduce((max, layer) => {
-                    const match = String(layer.id).match(/layer-(\d+)/);
-                    return match ? Math.max(max, Number(match[1])) : max;
-                }, 0);
-                nextLayerId = Math.max(nextLayerId, maxLayerNumber + 1);
-            }
+            if (snapshot.layers) restoreSerializedLayers(snapshot);
             if (snapshot.quickPaletteItems) {
                 quickPaletteItems = snapshot.quickPaletteItems.map(validPaletteItem).filter(Boolean);
                 saveQuickPalette();
@@ -14036,11 +15046,16 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
                 commitActiveShapeDraft();
             }
             if (undoStack.length === 0) return;
-            const currentState = createEditorSnapshot();
-            redoStack.push(currentState);
-            
             const previousState = undoStack.pop();
-            applySnapshot(previousState);
+            if (previousState.historyType === "layer-patch") {
+                redoStack.push(applyLayerPatchHistory(previousState));
+            } else if (previousState.historyType === "layers-snapshot") {
+                redoStack.push(applyLayerHistorySnapshot(previousState));
+            } else {
+                const currentState = createEditorSnapshot();
+                redoStack.push(currentState);
+                applySnapshot(previousState);
+            }
             updateButtons();
         }
 
@@ -14055,11 +15070,16 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
                 commitActiveShapeDraft();
             }
             if (redoStack.length === 0) return;
-            const currentState = createEditorSnapshot();
-            undoStack.push(currentState);
-            
             const nextState = redoStack.pop();
-            applySnapshot(nextState);
+            if (nextState.historyType === "layer-patch") {
+                undoStack.push(applyLayerPatchHistory(nextState));
+            } else if (nextState.historyType === "layers-snapshot") {
+                undoStack.push(applyLayerHistorySnapshot(nextState));
+            } else {
+                const currentState = createEditorSnapshot();
+                undoStack.push(currentState);
+                applySnapshot(nextState);
+            }
             updateButtons();
         }
 
@@ -14114,6 +15134,7 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
         }, true);
 
         canvasContainer.addEventListener('mouseleave', () => {
+            cancelQueuedShapePreview();
             if (replaceColorPreviewActive) {
                 renderReplaceColorPreview();
                 hideCursorSelectionFrame();
@@ -14223,8 +15244,7 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
 
                 clearPendingShapeStart();
                 if (!isEditableShapeTool() && activeTool !== 'curve') {
-                    saveCurrentStateToUndo();
-                    savedUndoInCurrentStroke = true;
+                    beginStrokeHistoryCapture();
                 }
                 isDrawing = true; 
                 hasDrawnInCurrentStroke = false;
@@ -14331,10 +15351,14 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
             
             lastMouseX = x;
             lastMouseZ = z;
-            if (!isPanning) updateCursorPreview(x, z);
+            if (!isPanning) {
+                if (isDrawing && isShapeTool()) queueShapePreview(x, z);
+                else updateCursorPreview(x, z);
+            }
         });
         
         window.addEventListener('mouseup', (e) => { 
+            cancelQueuedShapePreview();
             if (activeSelectionInteraction) {
                 finishSelectionInteraction(e);
                 return;
@@ -14433,7 +15457,7 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
                             renderActiveShapeDraft();
                         }
                     } else {
-                        if (drawShape(activeTool, lineStartX, lineStartZ, x, z, true, e.shiftKey)) {
+                        if (drawShape(activeTool, lineStartX, lineStartZ, clampedX, clampedZ, true, e.shiftKey)) {
                             hasDrawnInCurrentStroke = true;
                         }
                     }
@@ -14445,6 +15469,7 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
                 }
             }
 
+            finishStrokeHistoryCapture(hasDrawnInCurrentStroke);
             isDrawing = false; 
             endStrokeRenderThrottle();
             savedUndoInCurrentStroke = false;
@@ -14462,8 +15487,8 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
             return renderPreviewSurface(mapDisplayCanvas, canvas, editorMipChain, cssWidth, cssHeight);
         }
 
-        function queueEditorDisplayRender() {
-            invalidatePreviewMipChain(editorMipChain, canvas);
+        function queueEditorDisplayRender(options = {}) {
+            if (!options.preserveMipChain) invalidatePreviewMipChain(editorMipChain, canvas);
             if (queuedEditorDisplayFrame !== null) return;
             queuedEditorDisplayFrame = requestAnimationFrame(() => {
                 queuedEditorDisplayFrame = null;
@@ -14483,12 +15508,17 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
             previewCanvas.style.height = h;
         }
 
+        function editorFitCanvasScale(width = mapWidth, height = mapHeight) {
+            return Math.min(4, 512 / Math.max(1, width, height));
+        }
+
         function isCanvasFullscreen() {
             return document.fullscreenElement === canvasContainer;
         }
 
         function minimumCanvasScale() {
-            return isCanvasFullscreen() ? 0.1 : 0.5;
+            if (isCanvasFullscreen()) return 0.1;
+            return Math.min(0.5, editorFitCanvasScale());
         }
 
         function centerCanvasView() {
@@ -15072,35 +16102,125 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
             return hasVisiblePaintLayers() || editorLayers.some(layer => layer.kind === "base" && !layer.visible);
         }
 
-        function captureLoadedFileStructuralState() {
-            return loadedFiles.map(lf => ({
-                lf,
-                blocksList: lf.blocksList.slice(),
-                supportCreatedKeys: new Set(lf.supportCreatedKeys)
-            }));
+        function captureLoadedFileStructuralState(files = loadedFiles) {
+            return Array.from(files, lf => {
+                const state = {
+                    lf,
+                    blocksList: lf.blocksList,
+                    structurePalette: lf.structurePalette,
+                    paletteKeyToIndex: lf.paletteKeyToIndex,
+                    supportCreatedKeys: lf.supportCreatedKeys,
+                    supportKeysByRawXZ: lf.supportKeysByRawXZ,
+                    blockLookup: lf.blockLookup,
+                    nooblineBlockByRawX: lf.nooblineBlockByRawX,
+                    topMapBlockByRawXZ: lf.topMapBlockByRawXZ,
+                    supportMaterialKey: lf.supportMaterialKey,
+                    size: lf.nbtRoot.value.size && lf.nbtRoot.value.size.value
+                        ? lf.nbtRoot.value.size.value.list
+                        : null,
+                    nooblinePositions: Array.from(lf.nooblineBlockByRawX || [], ([, block]) => [block, block.pos.value.list[1]])
+                };
+
+                // Export mutates support lists and palette/index caches. Give it
+                // copy-on-write containers so rollback only swaps references back;
+                // it never walks the entire large NBT a second time.
+                lf.blocksList = state.blocksList.slice();
+                lf.nbtRoot.value.blocks.value.list = lf.blocksList;
+                lf.structurePalette = state.structurePalette.slice();
+                lf.nbtRoot.value.palette.value.list = lf.structurePalette;
+                lf.paletteKeyToIndex = new Map(state.paletteKeyToIndex || buildPaletteKeyMap(state.structurePalette));
+                lf.supportCreatedKeys = new Set(state.supportCreatedKeys || []);
+                lf.supportKeysByRawXZ = new Map(Array.from(state.supportKeysByRawXZ || [], ([key, values]) => [key, new Set(values)]));
+                lf.blockLookup = new Map(state.blockLookup || []);
+                lf.nooblineBlockByRawX = new Map(state.nooblineBlockByRawX || []);
+                lf.topMapBlockByRawXZ = new Map(Array.from(state.topMapBlockByRawXZ || [], ([key, value]) => [key, { ...value }]));
+                if (state.size) lf.nbtRoot.value.size.value.list = state.size.slice();
+                return state;
+            });
         }
 
         function restoreLoadedFileStructuralState(states) {
             for (const state of states) {
-                state.lf.blocksList.splice(0, state.lf.blocksList.length, ...state.blocksList);
-                state.lf.supportCreatedKeys = new Set(state.supportCreatedKeys);
-                rebuildBlockLookup(state.lf);
-                rebuildSupportIndex(state.lf);
-                state.lf.nooblineBlockByRawX = buildNooblineBlockByRawX(state.lf.nooblineZ, state.lf.blocksList);
-                updateStructureSize(state.lf);
+                state.lf.blocksList = state.blocksList;
+                state.lf.nbtRoot.value.blocks.value.list = state.blocksList;
+                state.lf.structurePalette = state.structurePalette;
+                state.lf.nbtRoot.value.palette.value.list = state.structurePalette;
+                state.lf.paletteKeyToIndex = state.paletteKeyToIndex;
+                state.lf.supportCreatedKeys = state.supportCreatedKeys;
+                state.lf.supportKeysByRawXZ = state.supportKeysByRawXZ;
+                state.lf.blockLookup = state.blockLookup;
+                state.lf.nooblineBlockByRawX = state.nooblineBlockByRawX;
+                state.lf.topMapBlockByRawXZ = state.topMapBlockByRawXZ;
+                state.lf.supportMaterialKey = state.supportMaterialKey;
+                if (state.size && state.lf.nbtRoot.value.size && state.lf.nbtRoot.value.size.value) {
+                    state.lf.nbtRoot.value.size.value.list = state.size;
+                }
+                for (const [block, y] of state.nooblinePositions) block.pos.value.list[1] = y;
             }
         }
 
+        function exportLayerCandidateCells() {
+            const baseVisible = editorLayers.some(layer => layer.kind === "base" && layer.visible);
+            if (!baseVisible) return gridMap.filter(Boolean);
+
+            // Layer edits are sparse. Walking the full map here made a small edit on
+            // a large map cost millions of compositePixelAt() calls during export.
+            const indices = new Set();
+            for (const layer of editorLayers) {
+                if (layer.kind !== "paint" || !layer.visible || layer.cells.size === 0) continue;
+                for (const key of layer.cells.keys()) {
+                    const pos = parseLayerCellKey(key);
+                    if (!pos || pos.x < 0 || pos.x >= mapWidth || pos.z < 0 || pos.z >= mapHeight) continue;
+                    indices.add(pos.z * mapWidth + pos.x);
+                }
+            }
+            return Array.from(indices, index => gridMap[index]).filter(Boolean);
+        }
+
+        function captureExportCellState(cells) {
+            return Array.from(cells, cell => ({
+                cell,
+                state: cell.blockRef.state.value,
+                rawY: cell.rawY,
+                colorId: cell.colorId,
+                blockKey: cell.blockKey,
+                exactRgb: cell.exactRgb,
+                exactTone: cell.exactTone,
+                exactColourSetId: cell.exactColourSetId,
+                exactMapartBlockId: cell.exactMapartBlockId
+            }));
+        }
+
+        function restoreFlattenedExport(transaction) {
+            if (!transaction) return;
+            for (const saved of transaction.cellStates) {
+                const cell = saved.cell;
+                cell.blockRef.state.value = saved.state;
+                cell.blockRef.pos.value.list[1] = saved.rawY;
+                cell.rawY = saved.rawY;
+                cell.colorId = saved.colorId;
+                cell.blockKey = saved.blockKey;
+                cell.exactRgb = saved.exactRgb;
+                cell.exactTone = saved.exactTone;
+                cell.exactColourSetId = saved.exactColourSetId;
+                cell.exactMapartBlockId = saved.exactMapartBlockId;
+                if (cell.file.topMapBlockByRawXZ) {
+                    const top = cell.file.topMapBlockByRawXZ.get(`${cell.rawX},${cell.rawZ}`);
+                    if (top && top.block === cell.blockRef) top.y = saved.rawY;
+                }
+            }
+            restoreLoadedFileStructuralState(transaction.fileStates);
+        }
+
         function applyVisibleLayersToBaseForExport() {
-            if (!exportNeedsLayerFlattening()) return;
+            if (!exportNeedsLayerFlattening()) return null;
 
             const targetPixels = [];
             const supportRecordCells = new Set();
             const toneOverridesByColumn = new Map();
             const airBlock = makeBlock("Air", "minecraft:air");
 
-            for (const cell of gridMap) {
-                if (!cell) continue;
+            for (const cell of exportLayerCandidateCells()) {
                 const pixel = compositePixelAt(cell.globalX, cell.globalZ);
 
                 const currentInfo = updateCellMetadata(cell);
@@ -15122,23 +16242,34 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
                 }
             }
 
-            if (targetPixels.length === 0) return;
+            if (targetPixels.length === 0) return null;
 
             const supportRecords = Array.from(supportRecordCells, cell => supportChangeRecordForCell(cell));
+            const affectedFiles = new Set(Array.from(supportRecordCells, cell => cell.file));
+            const transaction = {
+                cellStates: captureExportCellState(supportRecordCells),
+                fileStates: captureLoadedFileStructuralState(affectedFiles)
+            };
 
-            for (const target of targetPixels) {
-                const state = ensurePaletteState(target.cell.file, target.block);
-                target.cell.blockRef.state.value = state;
-                target.cell.colorId = target.color ? target.color.id : null;
-                target.cell.blockKey = target.block.key;
-                clearCellExactPreview(target.cell);
+            try {
+                for (const target of targetPixels) {
+                    const state = ensurePaletteState(target.cell.file, target.block);
+                    target.cell.blockRef.state.value = state;
+                    target.cell.colorId = target.color ? target.color.id : null;
+                    target.cell.blockKey = target.block.key;
+                    clearCellExactPreview(target.cell);
+                }
+
+                toneOverridesByColumn.forEach((overrides, globalX) => {
+                    solveColumnTones(globalX, overrides);
+                });
+
+                syncSupportsForCells(supportRecords);
+                return transaction;
+            } catch (error) {
+                restoreFlattenedExport(transaction);
+                throw error;
             }
-
-            toneOverridesByColumn.forEach((overrides, globalX) => {
-                solveColumnTones(globalX, overrides);
-            });
-
-            syncSupportsForCells(supportRecords);
         }
 
         async function withFlattenedLayersForExport(callback) {
@@ -15146,23 +16277,29 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
                 return await callback();
             }
 
-            const editorSnapshot = createEditorSnapshot();
-            const fileStates = captureLoadedFileStructuralState();
+            let transaction = null;
+            let result;
             try {
-                applyVisibleLayersToBaseForExport();
-                return await callback();
+                transaction = applyVisibleLayersToBaseForExport();
+                // An async function runs synchronously until its first await. All NBT
+                // roots/bytes are built before export callbacks await ZIP compression
+                // or download spacing, so the editor can be restored immediately.
+                result = callback();
             } finally {
-                applySnapshot(editorSnapshot);
-                restoreLoadedFileStructuralState(fileStates);
-                renderFullCanvas();
+                restoreFlattenedExport(transaction);
             }
+            return await result;
         }
 
         function createCombinedNbtRoot() {
             if (loadedFiles.length === 0) throw new Error("Upload files first.");
 
-            const minGridX = Math.min(...loadedFiles.map(lf => lf.gridX));
-            const minGridZ = Math.min(...loadedFiles.map(lf => lf.gridZ));
+            let minGridX = Infinity;
+            let minGridZ = Infinity;
+            for (const lf of loadedFiles) {
+                if (lf.gridX < minGridX) minGridX = lf.gridX;
+                if (lf.gridZ < minGridZ) minGridZ = lf.gridZ;
+            }
             const sourceBlocks = [];
 
             for (const lf of loadedFiles) {
@@ -15198,7 +16335,9 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
 
             const maxSourceX = sourceBlocks.reduce((max, block) => Math.max(max, block.x), -1);
             const nooblineWidth = Math.max(mapWidth, maxSourceX + 1);
-            sourceBlocks.push(...combinedNooblineBlocks(minGridX, minGridZ, nooblineWidth));
+            for (const block of combinedNooblineBlocks(minGridX, minGridZ, nooblineWidth)) {
+                sourceBlocks.push(block);
+            }
 
             let minX = Infinity, minY = Infinity, minZ = Infinity;
             let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
@@ -15250,16 +16389,68 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
             button.innerText = "Building NBT...";
 
             try {
-                await withFlattenedLayersForExport(async () => {
-                    const writer = new NBTWriter();
-                    writer.writeTag(createCombinedNbtRoot());
-                    downloadBlob(pako.gzip(writer.getOutput()), `${originalFileName || "mapart"}_combined.nbt`);
-                });
+                if (compactEditorSource) {
+                    await nextPaintFrame();
+                    downloadBlob(gzipNbtRoot(createCompactEditorNbtRoot()), `${originalFileName || "mapart"}_combined.nbt`);
+                } else {
+                    await nextPaintFrame();
+                    await withFlattenedLayersForExport(async () => {
+                        const writer = new NBTWriter();
+                        writer.writeTag(createCombinedNbtRoot());
+                        downloadBlob(pako.gzip(writer.getOutput()), `${originalFileName || "mapart"}_combined.nbt`);
+                    });
+                }
             } catch (error) {
                 alert("Failed to export single NBT: " + error.message);
             }
 
             button.innerText = originalText;
+        }
+
+        async function processCompactEditorExports(asZip, button) {
+            const cols = Math.ceil(mapWidth / CONVERTER_MAP_SIZE);
+            const rows = Math.ceil(mapHeight / CONVERTER_MAP_SIZE);
+            const total = cols * rows;
+            const zip = asZip && window.JSZip ? new JSZip() : null;
+            const storedEntries = [];
+            const pixelAt = createCompactEditorExportPixelAt();
+            let completed = 0;
+
+            for (let row = 0; row < rows; row++) {
+                for (let col = 0; col < cols; col++) {
+                    const root = createCompactEditorNbtRoot({
+                        startX: col * CONVERTER_MAP_SIZE,
+                        startY: row * CONVERTER_MAP_SIZE,
+                        width: Math.min(CONVERTER_MAP_SIZE, mapWidth - col * CONVERTER_MAP_SIZE),
+                        height: Math.min(CONVERTER_MAP_SIZE, mapHeight - row * CONVERTER_MAP_SIZE),
+                        pixelAt
+                    });
+                    const data = gzipNbtRoot(root);
+                    const name = `${originalFileName || "mapart"}_${col}_${row}.nbt`;
+                    if (asZip) {
+                        if (zip) zip.file(name, data);
+                        else storedEntries.push({ name, data });
+                    } else {
+                        downloadBlob(data, name);
+                    }
+
+                    completed++;
+                    if (completed % 4 === 0 || completed === total) {
+                        const percent = Math.round((completed / total) * 100);
+                        button.innerText = `${asZip ? "Building ZIP" : "Downloading"}... ${percent}%`;
+                        await nextPaintFrame();
+                    }
+                }
+            }
+
+            if (asZip) {
+                button.innerText = "Compressing ZIP...";
+                await nextPaintFrame();
+                const blob = zip
+                    ? await zip.generateAsync({ type: "blob" })
+                    : new Blob([createStoredZip(storedEntries)], { type: "application/zip" });
+                downloadBlob(blob, `${originalFileName || "mapart"}_split.zip`);
+            }
         }
 
         async function processExports(asZip) {
@@ -15270,7 +16461,11 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
             document.getElementById(btnId).innerText = asZip ? "Compressing ZIP..." : "Downloading...";
             
             try {
-                await withFlattenedLayersForExport(async () => {
+                if (compactEditorSource) {
+                    await processCompactEditorExports(asZip, document.getElementById(btnId));
+                } else {
+                    await nextPaintFrame();
+                    await withFlattenedLayersForExport(async () => {
                 const zip = new JSZip();
                 const needsSplit = loadedFiles.length === 1 && (mapWidth > 128 || mapHeight > 128);
                 let filesToExport = []; 
@@ -15407,7 +16602,8 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
                     }
                 }
                 
-                });
+                    });
+                }
             } catch (error) {
                 alert("Failed to export: " + error.message);
             }

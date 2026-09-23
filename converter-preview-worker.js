@@ -61,21 +61,26 @@ function convertPreview(message) {
     const converted = MAPARTCRAFT_EXACT.convertImageData(imageData, args);
     const pixelsData = converted.pixels.data;
     const totalPixels = width * height;
-    const mapColorBytes = new Uint8Array(totalPixels);
-    for (let index = 0, offset = 0; index < totalPixels; index++, offset += 4) {
-        mapColorBytes[index] = mapColorByteForConvertedDataOffset(pixelsData, offset);
+    const mapDatMode = conversionArgs.mode === MAPARTCRAFT_VENDOR.MapModes.MAPDAT.uniqueId;
+    const mapColorBytes = mapDatMode ? new Uint8Array(totalPixels) : null;
+    if (mapColorBytes) {
+        for (let index = 0, offset = 0; index < totalPixels; index++, offset += 4) {
+            mapColorBytes[index] = mapColorByteForConvertedDataOffset(pixelsData, offset);
+        }
     }
 
-    self.postMessage({
+    const result = {
         type: "result",
         jobId,
         width,
         height,
         pixelsBuffer: pixelsData.buffer,
-        mapColorBytesBuffer: mapColorBytes.buffer,
+        mapColorBytesBuffer: mapColorBytes ? mapColorBytes.buffer : null,
         maps: converted.maps,
         currentSelectedBlocks: converted.currentSelectedBlocks
-    }, [pixelsData.buffer, mapColorBytes.buffer]);
+    };
+    const transfers = mapColorBytes ? [pixelsData.buffer, mapColorBytes.buffer] : [pixelsData.buffer];
+    self.postMessage(result, transfers);
 }
 
 self.onmessage = event => {
