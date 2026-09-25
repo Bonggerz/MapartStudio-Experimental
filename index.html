@@ -7506,7 +7506,7 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
 
                 setConverterNbtExportProgress(button, 98, "Downloading NBT", "Starting NBT download...");
                 await nextPaintFrame();
-                downloadBlob(data, `${converterBaseName()}${single ? "_combined" : ""}.nbt`);
+                downloadBlob(data, `${converterBaseName()}.nbt`);
                 setConverterNbtExportProgress(button, 100, "NBT ready", "NBT export complete.");
                 await nextPaintFrame();
             } catch (error) {
@@ -8121,7 +8121,7 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
                 }
             };
             const file = {
-                name: `${converterBaseName()}_combined.nbt`,
+                name: `${converterBaseName()}.nbt`,
                 nbtRoot: syntheticRoot,
                 blocksList: syntheticRoot.value.blocks.value.list,
                 structurePalette,
@@ -8229,7 +8229,7 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
                     setConverterOpenProgress(52, "Loading editor cells...");
                     await nextPaintFrame();
                     loaded = await loadEditorNbtEntries([{
-                        name: `${converterBaseName()}_combined.nbt`,
+                        name: `${converterBaseName()}.nbt`,
                         nbtRoot
                     }], {
                         exactPixels: converterEditorExactPixelsSnapshot(),
@@ -15957,6 +15957,14 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
             setTimeout(() => URL.revokeObjectURL(link.href), 1000);
         }
 
+        function editorExportBaseName() {
+            return safeDownloadBaseName(String(originalFileName || "mapart").replace(/\.nbt$/i, "")) || "mapart";
+        }
+
+        function editorExportNbtFileName(name) {
+            return `${safeDownloadBaseName(String(name || "mapart").replace(/\.nbt$/i, "")) || "mapart"}.nbt`;
+        }
+
         function saveCurrentProfile() {
             downloadText(currentPaletteProfileText(), `${originalFileName || "nbt_mapart"}_profile.txt`);
             setPaletteStatus("Saved palette profile from current dropdown selections.");
@@ -16391,13 +16399,13 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
             try {
                 if (compactEditorSource) {
                     await nextPaintFrame();
-                    downloadBlob(gzipNbtRoot(createCompactEditorNbtRoot()), `${originalFileName || "mapart"}_combined.nbt`);
+                    downloadBlob(gzipNbtRoot(createCompactEditorNbtRoot()), `${editorExportBaseName()}.nbt`);
                 } else {
                     await nextPaintFrame();
                     await withFlattenedLayersForExport(async () => {
                         const writer = new NBTWriter();
                         writer.writeTag(createCombinedNbtRoot());
-                        downloadBlob(pako.gzip(writer.getOutput()), `${originalFileName || "mapart"}_combined.nbt`);
+                        downloadBlob(pako.gzip(writer.getOutput()), `${editorExportBaseName()}.nbt`);
                     });
                 }
             } catch (error) {
@@ -16408,6 +16416,7 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
         }
 
         async function processCompactEditorExports(asZip, button) {
+            const exportBase = editorExportBaseName();
             const cols = Math.ceil(mapWidth / CONVERTER_MAP_SIZE);
             const rows = Math.ceil(mapHeight / CONVERTER_MAP_SIZE);
             const total = cols * rows;
@@ -16426,7 +16435,7 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
                         pixelAt
                     });
                     const data = gzipNbtRoot(root);
-                    const name = `${originalFileName || "mapart"}_${col}_${row}.nbt`;
+                    const name = `${exportBase}_${col}_${row}.nbt`;
                     if (asZip) {
                         if (zip) zip.file(name, data);
                         else storedEntries.push({ name, data });
@@ -16449,12 +16458,13 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
                 const blob = zip
                     ? await zip.generateAsync({ type: "blob" })
                     : new Blob([createStoredZip(storedEntries)], { type: "application/zip" });
-                downloadBlob(blob, `${originalFileName || "mapart"}_split.zip`);
+                downloadBlob(blob, `${exportBase}_split.zip`);
             }
         }
 
         async function processExports(asZip) {
             if (loadedFiles.length === 0) { alert("Upload files first."); return; }
+            const exportBase = editorExportBaseName();
             
             const btnId = asZip ? 'saveZipBtn' : 'saveIndivBtn';
             const originalText = document.getElementById(btnId).innerText;
@@ -16575,7 +16585,7 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
 
                             const writer = new NBTWriter();
                             writer.writeTag(chunkNbtRoot);
-                            filesToExport.push({ name: `${originalFileName}_${cX}_${cZ}.nbt`, data: pako.gzip(writer.getOutput()) });
+                            filesToExport.push({ name: `${exportBase}_${cX}_${cZ}.nbt`, data: pako.gzip(writer.getOutput()) });
                         }
                     }
                 } else {
@@ -16584,7 +16594,7 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
                         updateStructureSize(lf);
                         const writer = new NBTWriter();
                         writer.writeTag(lf.nbtRoot);
-                        filesToExport.push({ name: lf.name, data: pako.gzip(writer.getOutput()) });
+                        filesToExport.push({ name: editorExportNbtFileName(lf.name), data: pako.gzip(writer.getOutput()) });
                     }
                 }
                 
@@ -16593,7 +16603,7 @@ sxztyson/mapartcraft. See NOTICE.md for its exact source revision.
                     const content = await zip.generateAsync({type:"blob"});
                     const link = document.createElement("a");
                     link.href = URL.createObjectURL(content);
-                    link.download = needsSplit ? `${originalFileName}_split.zip` : `${originalFileName}_edited.zip`;
+                    link.download = needsSplit ? `${exportBase}_split.zip` : `${exportBase}_edited.zip`;
                     link.click();
                 } else {
                     for (const f of filesToExport) {
